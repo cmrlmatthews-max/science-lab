@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Science Lab</title>
+<meta name="description" content="Interactive 3D instruments for learning how things work.">
+<meta name="theme-color" content="#f2ebda" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14120e" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Science Lab">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="stylesheet" href="shared/style.css">
+<style>
+  body { min-height: 100vh; background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px); background-size: 24px 24px; }
+  .hub { max-width: 980px; margin: 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 28px) max(16px, env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 28px; min-height: 100vh; }
+  .masthead { display: flex; flex-direction: column; gap: 10px; border-bottom: 3px solid var(--ink); padding-bottom: 18px; }
+  .kicker { font: 800 12px var(--font-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-2); display: flex; align-items: center; gap: 10px; }
+  .kicker::before { content: ""; width: 28px; height: 4px; background: var(--ink); }
+  .wordmark { font-family: var(--font-display); font-weight: 900; text-transform: uppercase; line-height: 0.82; letter-spacing: 0.01em; font-size: clamp(76px, 22vw, 168px); display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 0.18em; }
+  .wordmark .lab { background: var(--accent); color: var(--accent-ink); padding: 0.04em 0.12em 0.02em; border: 3px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); }
+  .tagline { max-width: 34em; font-size: 17px; color: var(--ink-2); }
+  .modules { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 700px) { .modules { grid-template-columns: 1.4fr 1fr; } .module.live { grid-row: span 3; } }
+  .module { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 18px 18px 20px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); text-decoration: none; min-height: 132px; }
+  .module .num-tag { font: 800 12px var(--font-display); letter-spacing: 0.2em; color: var(--ink-2); }
+  .module h2 { font: 900 30px/1 var(--font-display); letter-spacing: 0.04em; text-transform: uppercase; }
+  .module p { font-size: 15px; color: var(--ink-2); max-width: 30em; }
+  .module .status { margin-top: auto; align-self: flex-start; font: 800 12px var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; padding: 4px 9px; border: 1.5px solid var(--ink-2); color: var(--ink-2); }
+  .module.live { background: var(--accent); color: var(--accent-ink); box-shadow: 6px 6px 0 var(--ink); }
+  .module.live .num-tag, .module.live p { color: var(--accent-ink); }
+  .module.live h2 { font-size: clamp(38px, 9vw, 58px); }
+  .module.live .status { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .module.live:active { transform: translate(3px, 3px); box-shadow: 3px 3px 0 var(--ink); }
+  .module.off { border-style: dashed; border-color: var(--ink-2); background: transparent; }
+  .module.off h2 { color: var(--ink-2); }
+  .wall-art { display: block; width: 100%; height: 88px; margin-top: 4px; border: 2px solid var(--ink); background: var(--paper-2); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font: 800 12px var(--font-display); letter-spacing: 0.12em; text-transform: uppercase; padding: 4px 9px; border: 1.5px solid var(--ink); background: var(--paper-2); color: var(--ink); }
+  footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; border-top: 2px solid var(--ink); padding-top: 12px; font: 800 12px var(--font-display); letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-2); }
+  footer .mark { color: var(--ink); font-size: 15px; letter-spacing: 0.3em; }
+</style>
+</head>
+<body>
+<div class="hub">
+  <header class="masthead">
+    <div class="kicker">Study instruments</div>
+    <h1 class="wordmark"><span>Science</span><span class="lab">Lab</span></h1>
+    <p class="tagline">Build it, rotate it, break it. Interactive 3D models for learning how things really work.</p>
+  </header>
+
+  <main class="modules">
+    <a class="module live" href="envelope/">
+      <span class="num-tag">01</span>
+      <h2>Envelope Lab</h2>
+      <p>A building-science wall simulator. Stack layers, move the dew point, see where heat and water go.</p>
+      <svg class="wall-art" viewBox="0 0 320 88" preserveAspectRatio="none" role="img" aria-label="Wall section with a thermal gradient line">
+        <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#c4181f"/><stop offset=".5" stop-color="#f1ecde"/><stop offset="1" stop-color="#1b44c8"/></linearGradient></defs>
+        <rect x="0" y="0" width="32" height="88" fill="#faf6ea"/>
+        <rect x="32" y="0" width="96" height="88" fill="#f2a6b8"/>
+        <rect x="128" y="0" width="24" height="88" fill="#c9a66b"/>
+        <rect x="152" y="0" width="14" height="88" fill="#f6b800"/>
+        <rect x="166" y="0" width="64" height="88" fill="#1d4fd0"/>
+        <rect x="230" y="0" width="90" height="88" fill="#9a3b2c"/>
+        <polyline points="0,14 32,16 128,30 152,56 166,60 230,74 320,78" fill="none" stroke="#171512" stroke-width="7"/>
+        <polyline points="0,14 32,16 128,30 152,56 166,60 230,74 320,78" fill="none" stroke="url(#g)" stroke-width="3.5"/>
+      </svg>
+      <div class="chips"><span class="chip">Assembly</span><span class="chip">Thermal Bridge</span><span class="chip">Water</span></div>
+      <span class="status">Open</span>
+    </a>
+    <div class="module off" aria-disabled="true">
+      <span class="num-tag">02</span>
+      <h2>Orbital Mechanics</h2>
+      <p>Orbits, transfers and gravity.</p>
+      <span class="status">Stage 2 &mdash; not built</span>
+    </div>
+    <div class="module off" aria-disabled="true">
+      <span class="num-tag">03</span>
+      <h2>Molecules and Crystals</h2>
+      <p>Bonds, lattices and shapes.</p>
+      <span class="status">Stage 3 &mdash; not built</span>
+    </div>
+    <div class="module off" aria-disabled="true">
+      <span class="num-tag">04</span>
+      <h2>Earth Systems</h2>
+      <p>Air, water and ground in motion.</p>
+      <span class="status">Stage 4 &mdash; not built</span>
+    </div>
+  </main>
+
+  <footer><span>Science Lab</span><span class="mark">CMRLM</span></footer>
+</div>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('Service worker not registered', e); });
+    });
+  }
+</script>
+</body>
+</html>

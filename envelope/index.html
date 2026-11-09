@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Envelope Lab</title>
+<meta name="description" content="A 3D building-science wall simulator.">
+<meta name="theme-color" content="#f2ebda" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14120e" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Science Lab">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="../icons/icon-192.png">
+<link rel="stylesheet" href="../shared/style.css">
+<script type="importmap">{"imports":{"three":"../vendor/three.module.min.js","three/addons/controls/OrbitControls.js":"../vendor/OrbitControls.js"}}</script>
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <a class="home-link" href="../index.html" aria-label="Back to Science Lab">Lab</a>
+    <h1 class="app-title">Envelope Lab</h1>
+    <!-- mode tabs are inserted here by main.js -->
+  </header>
+  <main class="shell">
+    <section class="stage-wrap" aria-label="3D view">
+      <div id="stage" class="stage"></div>
+    </section>
+    <div id="summary" class="summary" aria-live="polite"></div>
+    <div id="sheet" class="sheet">
+      <section class="panel-wrap is-active" data-panel="a"><h2 class="panel-title" id="title-a">Layers</h2><div id="panel-a" class="panel"></div></section>
+      <section class="panel-wrap" data-panel="b"><h2 class="panel-title" id="title-b">Results</h2><div id="panel-b" class="panel"></div></section>
+      <section class="panel-wrap" data-panel="c"><h2 class="panel-title" id="title-c">Climate</h2><div id="panel-c" class="panel"></div></section>
+    </div>
+  </main>
+  <noscript>Envelope Lab needs JavaScript.</noscript>
+</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
