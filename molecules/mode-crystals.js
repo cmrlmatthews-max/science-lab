@@ -359,6 +359,10 @@ export default {
       drawPlanes();
       if (nb.on) viewer.highlight([nb.center, ...nb.list]); else viewer.clearHighlight();
       if (rebuilt) { measureStat.update({ value: 'None', unit: '', hint: MEASURE_HINT }); }
+      packNote.textContent = style === 'space-fill' && c.group === 'ionic'
+        ? 'The two kinds of atom are drawn so that unlike neighbors just touch. Their real sizes differ from what is shown.'
+        : '';
+      packNote.style.display = packNote.textContent ? '' : 'none';
       if (reframe) viewer.frame();
     }
 
@@ -474,6 +478,7 @@ export default {
     const planeHint = el('p', { class: 'xt-small', text: SHEET_PLAIN + '.' });
     const toggles = el('div', { class: 'xt-body', style: 'gap:6px' }, cellTog.el, planeTog.el, planeHint);
     const notesHost = el('div', { class: 'xt-body', style: 'gap:6px' });
+    const packNote = el('p', { class: 'xt-small' });
 
     // numbers area
     const tDensity = stat({ label: 'Density', value: 0, unit: 'g/cm³', digits: 3 });
@@ -515,7 +520,7 @@ export default {
     note('1 Å = 0.1 nanometer'),
     srcRow);
 
-    panelB.append(ans.el, chipHost, nbBox, whyBox, toggles, notesHost, numbers.el);
+    panelB.append(ans.el, chipHost, nbBox, whyBox, toggles, packNote, notesHost, numbers.el);
 
     // ---------- panel C ----------
     const legendHost = el('div', {});

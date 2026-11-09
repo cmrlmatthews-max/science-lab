@@ -28,14 +28,14 @@ window.setup = (o = {}) => {
     const m = S.createMarker('Lowest point', { side: 'right' }); stage.scene.add(m.object);
     const ar = S.createArrow({ radius: 0.4 }); stage.scene.add(ar.object);
     const a0 = (o.phase ?? 0.8);
-    for (let i = 0; i <= 40; i++) { const a = a0 - 0.5 + i / 40 * 0.5; c.setPosition([R * Math.cos(a), R * Math.sin(a)], k); }
+    for (let i = 0; i <= 40; i++) { const a = a0 - 1.6 + i / 40 * 1.6; c.setPosition([R * Math.cos(a), R * Math.sin(a)], k); }
     c.setHeading([-Math.sin(a0), Math.cos(a0)]);
     m.setPosition([R * Math.cos(2.5), R * Math.sin(2.5)], k);
     ar.set([R * Math.cos(a0), R * Math.sin(a0)], [-Math.sin(a0), Math.cos(a0)], k, 10);
     window.craft = c;
   }
   if (o.craftOnly) {
-    const c = S.createCraft({ trail: 20 }); stage.scene.add(c.object); c.setPosition([0, 0], 1); c.setHeading([1, 0.3]); window.craft = c;
+    const c = S.createCraft({ trail: 20, size: o.size || 13 }); stage.scene.add(c.object); c.setPosition([0, 0], 1); c.setHeading([1, 0.3]); window.craft = c;
   }
   S.frameSpace(stage, o.extent || 60, { elevationDeg: o.el ?? 55, azimuthDeg: o.az ?? 10 });
   if (o.cam) { stage.camera.position.set(...o.cam); stage.controls.target.set(...(o.target || [0, 0, 0])); stage.controls.update(); }

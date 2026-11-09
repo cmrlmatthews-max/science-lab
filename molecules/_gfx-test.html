@@ -86,6 +86,6 @@ if (extras) {
 }
 if (q.get('spin')) viewer.setSpin(true);
 stage.requestRender();
-window.__buildMs = buildMs;
+window.__buildMs = buildMs; window.__struct = structure; window.__opts = opts;
 setTimeout(() => { window.__ready = true; }, 600);
 </script></body></html>

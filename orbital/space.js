@@ -568,11 +568,11 @@ export function createPath(points, kmPerUnit, opts = {}) {
   const dashSize = opts.dashSize || 1.6;
   let baseOpacity = opts.opacity ?? 0.95;
   const mk = (w, op, glowPass) => new LineMaterial({
-    color, linewidth: w, transparent: !glowPass, opacity: glowPass ? 1 : op, depthWrite: !!glowPass, toneMapped: false,
+    color, linewidth: w, transparent: true, opacity: glowPass ? 1 : op, depthWrite: false, toneMapped: false,
     dashed, dashSize, gapSize: dashSize * 0.75, dashScale: 1,
   });
-  // The wide halo is an opaque, pre-dimmed copy of the color: on black it reads like a soft additive glow, and overlapping
-  // segment caps cannot stack into a beaded look the way translucent wide lines do.
+  // The wide halo is a fully opaque (alpha 1), pre-dimmed copy of the color: on black it reads like a soft glow, and overlapping
+  // segment caps replace each other instead of stacking into a beaded look the way translucent wide lines do.
   const coreMat = mk(coreW, baseOpacity, false);
   const glowMat = mk(coreW * 4.2, 1, true);
   const GLOW = 0.04;
