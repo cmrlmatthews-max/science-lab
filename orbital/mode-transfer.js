@@ -281,7 +281,7 @@ export default {
     function applyScene({ reframe }) {
       const body = g.body;
       const raw = sceneScale(2.2 * Math.max(g.r1, g.r2));
-      const bucket = Math.ceil(Math.log(raw) / Math.log(1.5) - 1e-9);
+      const bucket = Math.round(Math.log(raw) / Math.log(1.5));
       k = Math.pow(1.5, bucket);
 
       // body size and radial offset: keep a small visible gap between the body and the start orbit
@@ -309,7 +309,7 @@ export default {
 
       if (reframe || bucket !== lastBucket || lastBodyId !== body.id || lastBucket === null) {
         const lowHug = g.r1 / Math.max(g.r1, g.r2) < 0.3;
-        frameSpace(stage, 44, { elevationDeg: lowHug ? 68 : 55, padding: 1.05 });
+        frameSpace(stage, 48, { elevationDeg: lowHug ? 68 : 55, padding: 1.05 });
       }
       lastBucket = bucket;
       craft.clearTrail();
@@ -567,8 +567,8 @@ export default {
       const T = getT();
       // controls
       bodySel.set(b.id);
-      sStart.el.querySelector('.field-label').textContent = b.id === 'sun' ? 'Start orbit distance from the Sun' : 'Start orbit height';
-      sTarget.el.querySelector('.field-label').textContent = b.id === 'sun' ? 'Target orbit distance from the Sun' : 'Target orbit height';
+      sStart.el.querySelector('.field-label').textContent = b.id === 'sun' ? 'Start distance from the Sun' : 'Start orbit height';
+      sTarget.el.querySelector('.field-label').textContent = b.id === 'sun' ? 'Target distance from the Sun' : 'Target orbit height';
       sStart.set(posOf(toVal(b, g.r1), b));
       sTarget.set(posOf(toVal(b, g.r2), b));
       engineSeg.set(String(T.isp));
@@ -613,9 +613,10 @@ export default {
       // summary
       const h1 = b.id === 'sun' ? `${fmt(g.r1 / 1e6, 1)} million km` : `${fmt(T.alt1, 0)} km`;
       const h2 = b.id === 'sun' ? `${fmt(g.r2 / 1e6, 1)} million km` : `${fmt(g.r2 - b.radius, 0)} km`;
-      summaryEl.textContent = g.same
+      const sumText = g.same
         ? `${b.name} · ${h1} · same orbit, no burn needed`
         : `${b.name} · ${h1} to ${h2} · ${fmt(g.total, 2)} km/s · ${fmt(d.value, d.unit === 'days' && d.value < 10 ? 2 : 1)} ${d.unit} · fuel ${fmt(fuelPct, 0)}%`;
+      summaryEl.replaceChildren(el('span', { style: { display: 'block', whiteSpace: 'normal' }, text: sumText }));
       paintLive(true);
     }
 

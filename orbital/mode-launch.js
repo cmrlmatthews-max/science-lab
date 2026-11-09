@@ -131,16 +131,25 @@ export default {
     let pathObj = null;
     let pathClosed = null;
     const craft = createCraft({ trail: 140 });
-    const launchArrow = createArrow({ radius: 0.3 });
-    const speedArrow = createArrow({ color: spaceTheme().craft, radius: 0.3 });
+    const launchArrow = createArrow({ radius: 0.4 });
+    const speedArrow = createArrow({ color: spaceTheme().craft, radius: 0.4 });
     const recolorArrow = () => speedArrow.object.traverse((o) => { if (o.material && o.material.color) o.material.color.set(spaceTheme().craft); });
     cleanup.push(stage.onTheme(() => { recolorArrow(); if (pathObj) pathObj.setColor(spaceTheme().ink); }));
-    let mStart = createMarker('Start', { side: 'right' });
-    let startLabel = 'Start';
-    const mImpact = createMarker('Impact', { side: 'left' });
-    const mLow = createMarker('Lowest point', { side: 'left' });
-    const mHigh = createMarker('Highest point', { side: 'right' });
-    world.add(craft.object, launchArrow.object, speedArrow.object, mStart.object, mImpact.object, mLow.object, mHigh.object);
+    // The craft must stay visible when it sits on the surface at the impact point.
+    craft.object.traverse((o) => { if (o.material) o.material.depthTest = false; });
+    world.add(craft.object, launchArrow.object, speedArrow.object);
+    // space.js setLabel can grow the label canvas, which a GPU texture cannot follow, so a new label or side means a new marker.
+    const markers = {};
+    function marker(name, label, side) {
+      const key = `${label}|${side}`;
+      if (!markers[name] || markers[name].key !== key) {
+        if (markers[name]) markers[name].m.dispose();
+        const m = createMarker(label, { side });
+        world.add(m.object);
+        markers[name] = { key, m };
+      }
+      return markers[name].m;
+    }
 
     const clock = createClock();
     const sim = { r: [0, 0], v: [0, 0], t: 0, ended: null, autoPaused: false };
@@ -303,9 +312,9 @@ export default {
     const whyBox = el('div', { class: 'launch-why' });
     panelB.append(
       bannerBox,
-      section('Right now', stats(sAlt.el, sSpd.el, sTim.el)),
       section('Numbers', tilesBox),
       section('Why', whyBox),
+      section('Right now', stats(sAlt.el, sSpd.el, sTim.el)),
     );
 
     function tileDefs(m) {
@@ -489,22 +498,22 @@ export default {
 
       // markers and launch arrow
       const r0v = [0, model.r0];
-      // space.js setLabel can grow the label canvas, which a GPU texture cannot follow, so a new label means a new marker
+      // The arrow points along the launch direction, so the labels go on the other side of the dots.
+      const steep = model.angleDeg >= 45;
       const wantLabel = model.startAt === 'lowest' ? 'Start, lowest point' : model.startAt === 'highest' ? 'Start, highest point' : 'Start';
-      if (wantLabel !== startLabel) {
-        mStart.dispose();
-        mStart = createMarker(wantLabel, { side: 'right' });
-        world.add(mStart.object);
-        startLabel = wantLabel;
-      }
+      const mStart = marker('start', wantLabel, steep ? 'right' : 'left');
       mStart.setPosition(r0v, k);
-      mImpact.object.visible = model.outcome === 'impact' && !!model.imp;
-      if (mImpact.object.visible) mImpact.setPosition(model.imp.r, k);
+      const showImp = model.outcome === 'impact' && !!model.imp;
+      const mImpact = marker('impact', 'Impact', steep ? 'left' : 'right');
+      mImpact.object.visible = showImp;
+      if (showImp) mImpact.setPosition(model.imp.r, k);
       const showAp = !!model.apsides;
+      const mLow = marker('low', 'Lowest point', 'left');
+      const mHigh = marker('high', 'Highest point', 'right');
       mLow.object.visible = showAp && model.startAt !== 'lowest';
       mHigh.object.visible = showAp && model.startAt !== 'highest';
       if (showAp) { mLow.setPosition(model.apsides.peri, k); mHigh.setPosition(model.apsides.apo, k); }
-      launchArrow.set(r0v, model.start.v, k, 10);
+      launchArrow.set(r0v, model.start.v, k, 12);
       recolorArrow();
 
       const exag = bodyObj.exaggerated;
@@ -559,7 +568,7 @@ export default {
       // hand shared time state back in a neutral shape for the other modes
       const t = store.get().time;
       store.set({ time: { playing: sim.autoPaused ? true : t.playing, warp: 1 } });
-      [pathObj, craft, launchArrow, speedArrow, mStart, mImpact, mLow, mHigh, bodyObj].forEach((p) => { if (p) p.dispose(); });
+      [pathObj, craft, launchArrow, speedArrow, bodyObj, ...Object.values(markers).map((x) => x.m)].forEach((p) => { if (p) p.dispose(); });
       stars.dispose();
       rings.dispose();
       stage.scene.remove(world);

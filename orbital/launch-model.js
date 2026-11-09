@@ -119,7 +119,7 @@ export function computeLaunch(body, alt, speed, angleDeg) {
         peri: [el.rp * Math.cos(th), el.rp * Math.sin(th)],
         apo: [el.ra * Math.cos(th + Math.PI), el.ra * Math.sin(th + Math.PI)],
       };
-      const near = (p) => Math.hypot(p[0] - start.r[0], p[1] - start.r[1]) < 0.035 * m.extent;
+      const near = (p) => Math.hypot(p[0] - start.r[0], p[1] - start.r[1]) < 0.05 * m.extent;
       m.startAt = near(m.apsides.peri) ? 'lowest' : near(m.apsides.apo) ? 'highest' : null;
     }
   }
