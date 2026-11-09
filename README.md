@@ -1,7 +1,7 @@
 # Science Lab
 
 Science Lab is a set of 3D simulators for building science and general science.
-Stage 1 is **Envelope Lab**: a wall simulator with three modes.
+Stage 1 is **Envelope Lab**: a wall simulator with three modes. Stage 2 is **Orbital Mechanics** (see below).
 
 | Mode | What you do |
 |---|---|
@@ -10,6 +10,26 @@ Stage 1 is **Envelope Lab**: a wall simulator with three modes.
 | Water | See the five forces that move water, the four wall strategies, five flashing errors, and the four control layers. |
 
 Units are IP only. The app is a study tool. Do not use the results for project design.
+
+## Stage 2: Orbital Mechanics
+
+Orbital Mechanics shows launch, orbits, and transfers around real bodies (Earth, Moon, Mars, Sun). Open it from the hub at `orbital/`.
+
+| Mode | What you do |
+|---|---|
+| Launch | Pick a start altitude, speed, and angle. See if the craft falls back, orbits, or escapes. |
+| Orbits | Pick an orbit by its lowest and highest point. See speed, period, and the shape of the path. |
+| Transfer | Move a craft from one circular orbit to another. See the burns, the time, and the fuel. |
+
+Units are metric (km, km/s, and s, min, h, or days). Results are two-body, in one plane. Body data comes from the NASA Planetary Fact Sheet. The app is a study tool.
+
+```
+orbital/
+  index.html, main.js   shell, store, mode switching
+  space.js              shared 3D and time helpers
+  bodies.js, physics.js body data and two-body orbit math (tested)
+  mode-*.js             the three modes
+```
 
 ## Run the app on your Mac
 
@@ -29,11 +49,11 @@ The app must come from a web server. It does not open correctly from a double-cl
 4. Open the page address on your iPhone in Safari.
 5. Tap Share, then Add to Home Screen.
 
-After each change to a file, increase the cache number in `sw.js` (`science-lab-v3` becomes `science-lab-v4`). The installed app then gets the new files.
+After each change to a file, increase the cache number in `sw.js` (`science-lab-v4` becomes `science-lab-v5`). The installed app then gets the new files.
 
 ## Run the tests
 
-`node --test tests/*.test.mjs` (Node 22). 52 tests check the numbers against the plan.
+`node --test tests/*.test.mjs` (Node 22). The tests check the numbers against the plan.
 
 ## Files
 
