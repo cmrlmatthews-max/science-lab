@@ -465,7 +465,7 @@ export function createMarker(label, opts = {}) {
     }
     c.fillStyle = ink;
     c.fillText(text, x0, (hPx * S) / 2 + 1);
-    labelTex.needsUpdate = true;
+    labelTex.dispose(); labelTex.needsUpdate = true /* dispose forces a re-upload at the new canvas size */;
     labelSprite.userData.setPx(wPx, hPx);
     if (side === 'right') labelSprite.center.set(0, 0.5);
     else if (side === 'left') labelSprite.center.set(1, 0.5);

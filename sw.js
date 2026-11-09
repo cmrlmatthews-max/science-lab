@@ -37,6 +37,7 @@ const FILES = [
   './orbital/bodies.js',
   './orbital/physics.js',
   './orbital/mode-launch.js',
+  './orbital/launch-model.js',
   './orbital/mode-orbits.js',
   './orbital/mode-transfer.js',
 ];

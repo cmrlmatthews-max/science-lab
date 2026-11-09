@@ -279,6 +279,8 @@ export default {
     let markerLo = createMarker('Lowest point', { side: loSide });
     const markerHi = createMarker('Highest point', { side: 'above' });
     const craft = createCraft({ trail: 70 });
+    // Keep the craft visible when a low orbit passes behind the body (same choice as Launch mode).
+    craft.object.traverse((o) => { if (o.material) o.material.depthTest = false; });
     const arrow = createArrow();
     const wedgeGroup = new THREE.Group();
     wedgeGroup.renderOrder = 1;
