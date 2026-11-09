@@ -24,19 +24,19 @@ const CSS = `
 .water-row { cursor: pointer; align-items: flex-start; }
 .water-row .layer-name, .water-row .layer-sub { white-space: normal; overflow: visible; }
 .water-row .swatch { margin-top: 2px; }
-.water-row:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.water-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .water-list { display: flex; flex-direction: column; gap: 8px; }
 .water-list .layer-row + .layer-row { margin-top: 0; }
 .water-steps { margin: 0; padding: 0; list-style: none; counter-reset: ws; display: flex; flex-direction: column; gap: 9px; }
-.water-steps li { counter-increment: ws; display: grid; grid-template-columns: 26px 1fr; gap: 9px; font-size: 14px; line-height: 1.38; align-items: start; }
-.water-steps li::before { content: counter(ws); width: 24px; height: 24px; border: 1.5px solid var(--ink); border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-mono); background: var(--paper-2); }
-.water-steps li[data-leak="true"] { color: var(--warn); font-weight: 600; }
-.water-steps li[data-leak="true"]::before { background: var(--warn); border-color: var(--warn); color: #fff; }
+.water-steps li { counter-increment: ws; display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 13px; line-height: 1.38; align-items: start; }
+.water-steps li::before { content: counter(ws); width: 20px; height: 20px; border: 1px solid var(--line-strong); border-radius: 50%; display: grid; place-items: center; font: 500 11px var(--font-mono); background: var(--paper-3); color: var(--ink-2); }
+.water-steps li[data-leak="true"] { color: var(--warn); font-weight: 500; }
+.water-steps li[data-leak="true"]::before { background: var(--warn-soft); border-color: var(--warn-edge); color: var(--warn); }
 .water-err { display: flex; flex-direction: column; gap: 2px; }
 .water-err .layer-sub { white-space: normal; padding: 0 2px 0 2px; }
-.water-block { display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.38; }
-.water-block .water-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--font-display); font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; font-size: 15px; }
-.water-block b { font-family: var(--font-display); font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; font-size: 12px; color: var(--ink-2); margin-right: 6px; }
+.water-block { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.38; }
+.water-block .water-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; }
+.water-block b { font-weight: 500; font-size: 11.5px; color: var(--ink-2); margin-right: 6px; }
 .panel-wrap[data-panel="c"] .panel > .water-dims { flex: 3 1 520px; }
 .water-dims .stats { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
 .water-block[data-kind="leak"] { border-color: var(--warn); }

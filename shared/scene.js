@@ -70,11 +70,11 @@ function readTheme() {
   const get = (name, fallback) => cs.getPropertyValue(name).trim() || fallback;
   const dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   return {
-    bg: get('--stage-bg', dark ? '#0c0b09' : '#ebe2cb'),
-    ink: get('--ink', dark ? '#f4ecd8' : '#171512'),
-    paper: get('--paper-2', dark ? '#1e1b15' : '#faf6ea'),
-    grid: get('--line', dark ? '#3b3629' : '#cdc2a8'),
-    accent: get('--accent', '#f6b800'),
+    bg: get('--stage-bg', dark ? '#1b1e22' : '#eceef1'),
+    ink: get('--ink', dark ? '#e4e7eb' : '#1c1f23'),
+    paper: get('--paper-2', dark ? '#22262b' : '#ffffff'),
+    grid: get('--grid-line', dark ? '#2b3036' : '#e1e4e8'),
+    accent: get('--accent', dark ? '#58a6e0' : '#1f5fa8'),
     dark,
   };
 }
@@ -172,9 +172,9 @@ export function createStage(containerEl, opts = {}) {
 
   let grid = null;
   if (opts.grid) {
-    grid = new THREE.GridHelper(400, 40, theme.ink, theme.grid);
+    grid = new THREE.GridHelper(400, 40, theme.grid, theme.grid);
     grid.material.transparent = true;
-    grid.material.opacity = 0.5;
+    grid.material.opacity = 0.6;
     scene.add(grid);
   }
 
@@ -246,9 +246,9 @@ export function createStage(containerEl, opts = {}) {
       grid.material.dispose();
       scene.remove(grid);
       grid.geometry.dispose();
-      grid = new THREE.GridHelper(400, 40, theme.ink, theme.grid);
+      grid = new THREE.GridHelper(400, 40, theme.grid, theme.grid);
       grid.material.transparent = true;
-      grid.material.opacity = 0.5;
+      grid.material.opacity = 0.6;
       scene.add(grid);
     }
     for (const fn of Array.from(themeSubs)) {

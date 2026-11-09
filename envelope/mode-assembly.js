@@ -10,18 +10,18 @@ import { createWall3D, CONTROL_LEGEND } from './assembly-3d.js';
 import { createGraph } from './assembly-graph.js';
 
 const CSS = `
-.asm-editor{display:flex;flex-direction:column;gap:12px;padding:12px;margin:-4px 0 8px 10px;background:var(--paper-2);border:1.5px solid var(--ink);border-top:0;border-radius:0 0 var(--radius) var(--radius)}
-.asm-end{font:800 11px var(--font-display);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2);padding:2px 2px}
+.asm-editor{display:flex;flex-direction:column;gap:12px;padding:12px;margin:-6px 0 6px 10px;background:var(--paper-2);border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius) var(--radius)}
+.asm-end{font:500 11.5px var(--font-body);color:var(--ink-2);padding:2px 2px}
 .asm-list{display:flex;flex-direction:column;gap:6px}
 .asm-bar-row{display:flex;flex-direction:column;gap:3px}
-.asm-bar-head{display:flex;justify-content:space-between;font:700 12px var(--font-display);letter-spacing:.1em;text-transform:uppercase}
-.asm-bar-head .num{font-size:14px;letter-spacing:0}
-.asm-track{height:16px;background:var(--paper-3);border:1.5px solid var(--ink)}
-.asm-fill{height:100%;background:var(--ink);width:0}
-.asm-fill.alt{background:var(--accent);box-shadow:inset 0 0 0 1px var(--ink)}
-.asm-note{font-size:13px;color:var(--ink-2);line-height:1.35}
+.asm-bar-head{display:flex;justify-content:space-between;font:500 12px var(--font-body);color:var(--ink-2)}
+.asm-bar-head .num{font-size:13px;color:var(--ink)}
+.asm-track{height:8px;background:var(--track);border-radius:2px;overflow:hidden}
+.asm-fill{height:100%;background:var(--ink-2);width:0}
+.asm-fill.alt{background:var(--accent)}
+.asm-note{font-size:12px;color:var(--ink-2);line-height:1.35}
 .asm-graph{width:100%;min-width:0}
-.asm-show .seg-btn{font-size:11px;letter-spacing:0;padding:0 2px}
+.asm-show .seg-btn{font-size:12px;padding:0 2px}
 .asm-btns{display:flex;gap:8px;flex-wrap:wrap}
 .asm-btns .btn{flex:1 1 auto;padding:0 10px}
 `;

@@ -33,21 +33,20 @@ const SRC_DEW = 'Magnus formula. BCI 7.45';
 const CSS = `
 .bt-wrap{display:flex;flex-direction:column;gap:6px}
 .bt-head,.bt-row{display:grid;grid-template-columns:minmax(0,1fr) 52px 58px 52px;column-gap:6px;align-items:center}
-.bt-head{padding:0 10px;font:800 11px var(--font-display);letter-spacing:.12em;color:var(--ink-2);text-transform:uppercase}
+.bt-head{padding:0 10px;font:500 11px var(--font-body);color:var(--ink-2)}
 .bt-head span:not(:first-child),.bt-row span:not(:first-child){text-align:right}
-.bt-row{width:100%;min-height:46px;padding:4px 10px;text-align:left;background:var(--paper-2);color:var(--ink);border:1.5px solid var(--line);border-radius:var(--radius);font:600 13px var(--font-body)}
-.bt-row .m{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:13px}
-.bt-row[aria-pressed="true"]{border-color:var(--ink);background:var(--accent);color:var(--accent-ink);box-shadow:inset 0 -3px 0 var(--ink)}
-.bt-row[data-warn="true"] .m.low{color:var(--warn);font-weight:800}
-.bt-row[aria-pressed="true"][data-warn="true"] .m.low{color:var(--accent-ink)}
-.bt-note{margin:0;font-size:13px;line-height:1.4;color:var(--ink-2)}
+.bt-row{width:100%;min-height:calc(var(--ctl) + 4px);padding:4px 10px;text-align:left;background:var(--paper-3);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius);font:500 12.5px var(--font-body)}
+.bt-row .m{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:12.5px}
+.bt-row[aria-pressed="true"]{border-color:var(--accent-edge);background:var(--accent-soft);color:var(--ink);box-shadow:inset 2px 0 0 var(--accent)}
+.bt-row[data-warn="true"] .m.low{color:var(--warn);font-weight:600}
+.bt-note{margin:0;font-size:12px;line-height:1.4;color:var(--ink-2)}
 .bt-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.bt-list li{font-size:14px;line-height:1.45;padding-left:12px;border-left:3px solid var(--ink)}
+.bt-list li{font-size:13px;line-height:1.45;padding-left:10px;border-left:1px solid var(--line-strong)}
 .bt-graph{display:block;width:100%;max-width:560px;height:auto;max-height:230px;color:var(--ink)}
-.bt-graph text{font-family:var(--font-mono);font-size:9.5px;fill:currentColor}
-.bt-graph .cap{font-family:var(--font-display);font-weight:800;letter-spacing:.12em;font-size:9.5px}
-.bt-reset{position:absolute;top:10px;right:10px;z-index:3;min-height:40px;padding:0 12px;font-size:13px}
-.bt-sub{margin:0;font-size:13px;color:var(--ink-2)}
+.bt-graph text{font-family:var(--font-mono);font-size:10px;fill:var(--ink-2)}
+.bt-graph .cap{font-family:var(--font-body);font-weight:500;font-size:11px}
+.bt-reset{position:absolute;top:10px;right:10px;z-index:3;min-height:var(--ctl);padding:0 12px;font-size:13px}
+.bt-sub{margin:0;font-size:12px;color:var(--ink-2)}
 `;
 
 function clampv(v, a, b) { return Math.min(b, Math.max(a, v)); }
@@ -78,38 +77,38 @@ function graphSvg(r, climate) {
   }
   const xt = r.widthIn <= 20 ? 4 : r.widthIn <= 34 ? 8 : 10;
   for (let x = 0; x <= r.widthIn + 0.01; x += xt) {
-    g += `<line x1="${xs(x).toFixed(1)}" x2="${xs(x).toFixed(1)}" y1="${mt + ph}" y2="${mt + ph + 4}" style="stroke:var(--ink)" stroke-width="1"/>`;
+    g += `<line x1="${xs(x).toFixed(1)}" x2="${xs(x).toFixed(1)}" y1="${mt + ph}" y2="${mt + ph + 4}" style="stroke:var(--line-strong)" stroke-width="1"/>`;
     g += `<text x="${xs(x).toFixed(1)}" y="${mt + ph + 14}" text-anchor="middle">${x}</text>`;
   }
   // axes
-  g += `<path d="M${ml} ${mt}V${mt + ph}H${W - mr}" fill="none" style="stroke:var(--ink)" stroke-width="1.5"/>`;
-  const axisLabel = r.orientation === 'section' ? 'HEIGHT (IN)' : 'ALONG WALL (IN)';
+  g += `<path d="M${ml} ${mt}V${mt + ph}H${W - mr}" fill="none" style="stroke:var(--line-strong)" stroke-width="1"/>`;
+  const axisLabel = r.orientation === 'section' ? 'Height (in)' : 'Along wall (in)';
   g += `<text class="cap" x="${ml + pw / 2}" y="${H - 6}" text-anchor="middle">${axisLabel}</text>`;
-  g += `<text class="cap" x="10" y="${mt + ph / 2}" text-anchor="middle" transform="rotate(-90 10 ${mt + ph / 2})">SURFACE °F</text>`;
+  g += `<text class="cap" x="10" y="${mt + ph / 2}" text-anchor="middle" transform="rotate(-90 10 ${mt + ph / 2})">Surface °F</text>`;
   // dew point (dashed)
   const yd = ys(dew);
-  g += `<line x1="${ml}" x2="${W - mr}" y1="${yd.toFixed(1)}" y2="${yd.toFixed(1)}" style="stroke:var(--cold)" stroke-width="1.6" stroke-dasharray="5 4"/>`;
+  g += `<line x1="${ml}" x2="${W - mr}" y1="${yd.toFixed(1)}" y2="${yd.toFixed(1)}" style="stroke:var(--cold)" stroke-width="1.25" stroke-dasharray="5 4"/>`;
   const dewAbove = yd > mt + ph * 0.5;   // put the label on the roomier side
-  g += `<text class="cap" x="${W - mr - 3}" y="${(dewAbove ? yd - 4 : yd + 11).toFixed(1)}" text-anchor="end" style="fill:var(--cold)">DEW POINT ${fmt(dew, 1)}</text>`;
+  g += `<text class="cap" x="${W - mr - 3}" y="${(dewAbove ? yd - 4 : yd + 11).toFixed(1)}" text-anchor="end" style="fill:var(--cold)">Dew point ${fmt(dew, 1)}</text>`;
   // clear wall reference
   const yc = ys(clearT);
-  g += `<line x1="${ml}" x2="${W - mr}" y1="${yc.toFixed(1)}" y2="${yc.toFixed(1)}" style="stroke:var(--ink-2)" stroke-width="1" />`;
-  g += `<text class="cap" x="${ml + 4}" y="${(yc - 4).toFixed(1)}" style="fill:var(--ink-2)">CLEAR WALL</text>`;
+  g += `<line x1="${ml}" x2="${W - mr}" y1="${yc.toFixed(1)}" y2="${yc.toFixed(1)}" style="stroke:var(--ink-2)" stroke-width="1" stroke-dasharray="1 3"/>`;
+  g += `<text class="cap" x="${ml + 4}" y="${(yc - 4).toFixed(1)}" style="fill:var(--ink-2)">Clear wall</text>`;
   // surface line
   let d = '';
   for (let i = 0; i < surf.length; i++) {
     const x = xs((i + 0.5) * r.cell);
     d += `${i ? 'L' : 'M'}${x.toFixed(1)} ${ys(surf[i]).toFixed(1)}`;
   }
-  g += `<path d="${d}" fill="none" style="stroke:var(--ink)" stroke-width="2.6" stroke-linejoin="round"/>`;
+  g += `<path d="${d}" fill="none" style="stroke:var(--ink)" stroke-width="1.5" stroke-linejoin="round"/>`;
   // minimum
   const mx = xs((r.minInteriorAt + 0.5) * r.cell), my = ys(r.minInteriorT);
   const col = r.condensationRisk ? 'var(--warn)' : 'var(--ink)';
-  g += `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="5" style="fill:${col};stroke:var(--paper-2)" stroke-width="1.5"/>`;
+  g += `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="4" style="fill:${col};stroke:var(--paper-2)" stroke-width="1.5"/>`;
   const right = mx > ml + pw * 0.62;
   const tx = right ? mx - 8 : mx + 8;
   const below = my < mt + ph * 0.8;
-  g += `<text class="cap" x="${tx.toFixed(1)}" y="${(below ? my + 13 : my - 8).toFixed(1)}" text-anchor="${right ? 'end' : 'start'}" style="fill:${col}">MIN ${fmt(r.minInteriorT, 1)}</text>`;
+  g += `<text class="cap" x="${tx.toFixed(1)}" y="${(below ? my + 13 : my - 8).toFixed(1)}" text-anchor="${right ? 'end' : 'start'}" style="fill:${col}">Min ${fmt(r.minInteriorT, 1)}</text>`;
   return `<svg class="bt-graph" viewBox="0 0 ${W} ${H}" role="img" aria-label="Interior surface temperature along the detail. Lowest ${fmt(r.minInteriorT, 1)} degrees F, dew point ${fmt(dew, 1)} degrees F.">${g}</svg>`;
 }
 
@@ -159,7 +158,7 @@ export default {
 
     const resetBtn = button({ label: 'Reset view', kind: 'ghost', onClick: () => scene3d.frame() });
     resetBtn.classList.add('bt-reset');
-    resetBtn.style.background = 'var(--paper-2)';
+    resetBtn.style.background = 'var(--paper-3)';
     stageEl.appendChild(resetBtn);
     cleanup.push(() => resetBtn.remove());
 
@@ -200,7 +199,7 @@ export default {
       section('Detail', detailSeg.el, blurb),
       section('Variant', variantHolder, variantFull),
       section('View', showSeg.el, arrowTg.el),
-      section('Compare', tableHolder, el('p', { class: 'bt-note', text: 'R EFF is whole-wall R. +LOSS is extra heat loss against a wall with no bridge. MIN is the coldest inside surface in °F. Tap a row to pick it.' })),
+      section('Compare', tableHolder, el('p', { class: 'bt-note', text: 'R eff is whole-wall R. +Loss is extra heat loss against a wall with no bridge. Min is the coldest inside surface in °F. Tap a row to pick it.' })),
       section('Materials', legendHolder),
     );
 
@@ -250,7 +249,7 @@ export default {
     }
     function paintTable() {
       const d = DETAILS[b.detailId];
-      const head = el('div', { class: 'bt-head', 'aria-hidden': 'true' }, el('span', { text: 'Variant' }), el('span', { text: 'R EFF' }), el('span', { text: '+LOSS' }), el('span', { text: 'MIN °F' }));
+      const head = el('div', { class: 'bt-head', 'aria-hidden': 'true' }, el('span', { text: 'Variant' }), el('span', { text: 'R eff' }), el('span', { text: '+Loss' }), el('span', { text: 'Min °F' }));
       const btns = d.variants.map((v) => {
         const r = rows[v.id];
         const key = `${d.id}:${v.id}`;
