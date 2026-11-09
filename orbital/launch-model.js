@@ -6,7 +6,7 @@
 
 import {
   circularSpeed, escapeSpeed, elementsFromState, classifyTrajectory, launchState,
-  samplePath, impactPoint, visViva, timeSincePeriapsis,
+  samplePath, impactPoint, visViva, timeSincePeriapsis, formatDuration,
 } from './physics.js';
 
 const TWO_PI = 2 * Math.PI;
@@ -152,8 +152,23 @@ function autoWarp(m) {
   return w >= 100 ? Math.round(w) : Math.round(w * 10) / 10;
 }
 
+/** "Earth", "Mars", "the Moon", "the Sun". */
+function withThe(name) { return name === 'Moon' || name === 'Sun' ? `the ${name}` : name; }
+
+/** Plain duration, for example "13 minutes" or "3.1 hours". */
+function plainDuration(seconds, f) {
+  const d = formatDuration(seconds);
+  const v = Math.abs(d.value);
+  const digits = v >= 10 ? 0 : 1;
+  const unit = { s: 'seconds', min: 'minutes', h: 'hours', days: 'days' }[d.unit];
+  const shown = Number(v.toFixed(digits));
+  const word = shown === 1 ? unit.replace(/s$/, '') : unit;
+  return `${f(d.value, digits)} ${word}`;
+}
+
 /**
- * Plain words for the result: banner and the short "why" sentences.
+ * Plain words for the result: title and one or two short sentences (kind: ok, warn or info),
+ * plus the short "why" sentences that go with the numbers.
  * @param {ReturnType<typeof computeLaunch>} m
  * @param {(n:number, d:number)=>string} f number formatter (the ui.js fmt)
  * @returns {{kind:'warn'|'ok'|'info', title:string, text:string, why:string[]}}
@@ -161,6 +176,7 @@ function autoWarp(m) {
 export function describe(m, f) {
   const slow = m.speed < m.vc * 0.999;
   const steep = m.angleDeg > 30;
+  const where = withThe(m.body.name);
   if (m.outcome === 'impact') {
     const why = [];
     if (m.speed < 1e-6) {
@@ -174,12 +190,19 @@ export function describe(m, f) {
       why.push('The speed is high enough, but this angle puts too much of it into climbing. The craft goes up, then comes back down.');
     }
     why.push('Its path dips below the surface, so the craft hits the ground before it can go around.');
-    return { kind: 'warn', title: 'Falls back to the surface', text: '', why };
+    const t = plainDuration(m.stats.tImpact, f);
+    const ground = m.stats.ground;
+    let text;
+    if (m.speed < 1e-6) text = `It falls straight down. It lands after ${t}.`;
+    else if (m.radial) text = `It goes straight up, then gravity pulls it straight back down. It lands after ${t}.`;
+    else if (Number.isFinite(ground) && ground >= 1) text = `Gravity pulls it down before it can get around ${where}. It lands after ${t}, ${f(ground, 0)} km away.`;
+    else text = `Gravity pulls it down before it can get around ${where}. It lands after ${t}.`;
+    return { kind: 'warn', title: 'It falls back', text, why };
   }
   if (m.outcome === 'decay') {
     const why = ['The path stays above the ground but dips into the upper atmosphere.',
       'Thin air drags on the craft every time it passes through, so it loses speed and spirals down.'];
-    return { kind: 'warn', title: 'Orbit is too low', text: 'The atmosphere slows the craft and it comes down.', why };
+    return { kind: 'warn', title: 'It skims the air and comes down', text: 'Its path dips into the thin upper air. The air slows it a little on every trip, so it slowly comes down.', why };
   }
   if (m.outcome === 'escape') {
     const why = [];
@@ -187,20 +210,25 @@ export function describe(m, f) {
       why.push('The craft moves at exactly the escape speed. It keeps slowing down and never quite stops.');
     } else {
       why.push(`This speed is above the escape speed of ${f(m.ve, 2)} km/s. Gravity slows the craft as it climbs, but never enough to stop it.`);
-      why.push(`Far from the ${m.body.name} it still moves at ${f(m.stats.vInf, 2)} km/s.`);
+      why.push(`Far from ${where} it still moves at ${f(m.stats.vInf, 2)} km/s.`);
     }
     why.push('The craft does not come back.');
-    return { kind: 'info', title: 'Escapes', text: 'It does not come back.', why };
+    return { kind: 'info', title: 'It escapes', text: 'It is too fast for gravity to pull it back.', why };
   }
   const why = [];
+  const trip = plainDuration(m.stats.period, f);
+  let text;
   if (m.stats.circular) {
     why.push('At this speed the ground curves away as fast as the craft falls. The craft keeps falling around the body and never reaches the surface.');
+    text = `It is falling the whole time, but it moves sideways so fast that the ground curves away under it. One trip around takes ${trip}.`;
   } else if (slow) {
     why.push('This speed is below the circular speed, so the craft first drops inward. It still misses the surface, swings around, and climbs back to this height.');
+    text = `It dips closer first, but it moves sideways fast enough to keep missing the ground. One trip around takes ${trip}.`;
   } else {
     why.push('This speed is above the circular speed, so the craft climbs away from the body, slows down, and then falls back toward it.');
     why.push('The path is a stretched circle called an ellipse. The craft moves fastest at its lowest point.');
+    text = `It swings far out, then falls back in, over and over. It is faster near ${where} and slower far away. One trip around takes ${trip}.`;
   }
   why.push('Nothing slows the craft, so it repeats the same loop.');
-  return { kind: 'ok', title: 'Stays in orbit', text: '', why };
+  return { kind: 'ok', title: 'It stays in orbit', text, why };
 }

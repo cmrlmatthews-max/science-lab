@@ -17,8 +17,8 @@
 <link rel="stylesheet" href="../shared/style.css">
 <script type="importmap">{"imports":{"three":"../vendor/three.module.min.js","three/addons/controls/OrbitControls.js":"../vendor/OrbitControls.js"}}</script>
 <style id="orbital-style">
-  /* Space view: no square-grid backdrop behind the 3D canvas (layout glue only, existing tokens). */
-  .stage { background-image: none; }
+  /* Space is black in both color themes: no grid backdrop, true black behind the 3D canvas. */
+  .stage-wrap, .stage { background: #000; background-image: none; }
   .app-title { white-space: nowrap; }
 </style>
 </head>

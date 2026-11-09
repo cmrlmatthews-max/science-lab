@@ -4,6 +4,7 @@
 
 import { createStage } from '../shared/scene.js';
 import { tabs } from '../shared/ui.js';
+import { configureRenderer } from './viewer.js';
 import molecules from './mode-molecules.js';
 import crystals from './mode-crystals.js';
 import compare from './mode-compare.js';
@@ -117,6 +118,7 @@ function switchMode(id) {
   document.title = `${mode.label} · Molecules and Crystals`;
   showPanel('a');
   stage = createStage(stageEl, { fov: 25 });
+  configureRenderer(stage);   // ACES filmic tone mapping, sRGB output, soft shadow map
   try {
     mode.mount({ stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow: () => narrowMq.matches });
   } catch (e) {

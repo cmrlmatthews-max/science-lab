@@ -1,15 +1,16 @@
-// orbital/mode-orbits.js  Orbits mode of Orbital Mechanics.
-// An orbit is set by its lowest point and its highest point. The user changes them and sees the shape,
-// how the speed changes along the path, how long one orbit takes, and that a line from the body to the
-// craft sweeps equal areas in equal times.
+// orbital/mode-orbits.js  Orbits mode of Orbital Mechanics ("simple first" version).
+// One plain question: why do some satellites circle fast and others slow?
+// Main view: World, Orbit list, Height slider and Shape. Everything technical (lowest and highest point
+// sliders, stat tiles, compare table, speed graph, speed arrow switch, source tags) sits behind "Show numbers".
 //
-// State lives in ctx.store: bodyId, time {playing, warp}, orbits {pe, ap, presetId, showVelocity, showAreas}.
+// State lives in ctx.store: bodyId, time {playing, warp}, orbits {pe, ap, presetId, showVelocity, showAreas, showNumbers}.
 // pe and ap are altitudes above the surface in km. For the Sun the presets give distances from the center
 // (peR, apR); they are converted to altitudes here.
 // mode default export: { id, label, panelTitles, mount(ctx), unmount() }
 
 import { THREE } from '../shared/scene.js';
-import { el, fmt, select, slider, toggle, button, section, stats, stat, banner } from '../shared/ui.js';
+import { el, fmt, select, slider, segmented, toggle, button, section, stats, stat, banner } from '../shared/ui.js';
+import { question, answer, tryThis, numbersSwitch } from '../shared/simple.js';
 import { BODIES, BODY_ORDER, ORBIT_PRESETS } from './bodies.js';
 import { elementsFromApsides, positionAtTime, samplePath, formatDuration } from './physics.js';
 import {
@@ -25,6 +26,7 @@ const ARROW_MAX = 15;             // scene units, arrow length at the fastest sp
 const ARROW_MIN = 4;              // scene units, arrow length floor (slowest speed)
 const FRAME_EXTENT = 50;          // half width framed, scene units (the orbit spans 37 to 56 units)
 const ELEVATION = 66;             // camera elevation for this mode, degrees
+const SHAPE_E = { circle: 0, oval: 0.3, long: 0.7 }; // how oval each Shape choice is
 
 // Slider ranges, altitude above the surface in km.
 const RANGES = {
@@ -44,18 +46,26 @@ const WARP_LADDER = [
 ].map(([value, label]) => ({ value, label }));
 
 const STYLE = `
+.orb-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .orb-list { display: flex; flex-direction: column; gap: 6px; }
 .orb-list .layer-row { cursor: pointer; flex-wrap: nowrap; }
 .orb-list .layer-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.orb-list .layer-sub { white-space: normal; overflow: visible; text-overflow: clip; font-size: 12px; line-height: 1.35; }
 .orb-note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink); }
 .orb-note + .orb-note { margin-top: 6px; }
 .orb-cap { margin: 0; font-size: 12px; line-height: 1.4; color: var(--ink-2); }
+.orb-live { margin: 0; font-size: 15px; line-height: 1.4; color: var(--ink); font-variant-numeric: tabular-nums; }
+.orb-facts { display: flex; flex-direction: column; gap: 3px; }
+.orb-fact { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.orb-fact strong { color: var(--ink); font-weight: 600; }
 .orb-bar { display: flex; flex-direction: column; gap: 4px; }
+.orb-bar[hidden] { display: none; }
 .orb-bar-track { position: relative; height: 10px; border-radius: 2px; background: var(--track); border: 1px solid var(--line-strong); }
 .orb-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-edge); border-radius: 1px; }
 .orb-bar-tick { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; background: var(--ink); border-radius: 1px; }
-.orb-bar-labels { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--ink-2); }
+.orb-bar-labels { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-2); }
 .orb-bar-labels .mono { font-variant-numeric: tabular-nums; }
+.orb-bar[data-numbers="false"] .mono { display: none; }
 .orb-table { display: flex; flex-direction: column; gap: 4px; }
 .orb-tr { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.25fr) minmax(0, 0.85fr) minmax(0, 0.85fr); gap: 4px 8px; align-items: center; padding: 6px 8px; min-height: 44px; font-size: 12px; line-height: 1.3; background: var(--paper-3); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; text-align: left; color: var(--ink); font-family: var(--font-body); width: 100%; }
 .orb-tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -71,7 +81,7 @@ const STYLE = `
 .orb-graph .cv { stroke: var(--accent); stroke-width: 2; fill: none; stroke-linejoin: round; }
 .orb-graph .mk { fill: var(--hot); stroke: var(--paper-2); stroke-width: 2; }
 .orb-graph .mkl { stroke: var(--hot); stroke-width: 1; opacity: 0.5; }
-.orb-stage-note { position: absolute; left: 10px; bottom: 8px; font: 11px var(--font-body); color: var(--ink-2); pointer-events: none; }
+.orb-stage-note { position: absolute; left: 10px; bottom: 8px; font: 11px var(--font-body); color: rgba(255, 255, 255, 0.72); pointer-events: none; }
 `;
 
 // ---------- helpers ----------
@@ -104,8 +114,68 @@ function rangeText(pe, ap) {
 function durText(s) { const d = formatDuration(s); return `${fmt(d.value, 1)} ${d.unit}`; }
 function shapeWord(e) { return e < 0.01 ? 'circle' : e < 0.2 ? 'slightly oval' : e < 0.6 ? 'oval' : 'long oval'; }
 
+const trimZero = (s) => s.replace(/\.0$/, '');
+/** Trip time in everyday words: "93 minutes", "23.9 hours", "365 days". */
+function tripText(s) {
+  const min = s / 60;
+  if (min < 120) return `${Math.round(min)} minutes`;
+  const h = s / 3600;
+  if (h < 48) return `${trimZero(fmt(h, 1))} hours`;
+  const d = s / 86400;
+  if (d < 730) return `${d < 100 ? trimZero(fmt(d, 1)) : fmt(d, 0)} days`;
+  return `${trimZero(fmt(d / 365.25, 1))} years`;
+}
+/** Short trip time for the one-line summary: "93 min", "12 h", "365 days". */
+function shortTrip(s) {
+  const min = s / 60;
+  if (min < 120) return `${Math.round(min)} min`;
+  const h = s / 3600;
+  if (h < 48) return `${trimZero(fmt(h, 1))} h`;
+  const d = s / 86400;
+  if (d < 730) return `${d < 100 ? trimZero(fmt(d, 1)) : fmt(d, 0)} days`;
+  return `${trimZero(fmt(d / 365.25, 1))} years`;
+}
+/** km/s to km/h, three significant figures, with thousands separators. */
+function kmh(v) {
+  const x = v * 3600;
+  const p = Math.pow(10, Math.max(0, Math.floor(Math.log10(x)) - 2));
+  return fmt(Math.round(x / p) * p, 0);
+}
+function speedText(e) {
+  return e.e < 0.02
+    ? `${kmh(e.vp)} km/h (${fmt(e.vp, 1)} km/s)`
+    : `${kmh(e.va)} to ${kmh(e.vp)} km/h (${fmt(e.va, 1)} to ${fmt(e.vp, 1)} km/s)`;
+}
+function shapeKind(e) { return e < 0.02 ? 'circle' : e < 0.5 ? 'oval' : 'long'; }
+
 function elementsFor(body, pe, ap) {
   return { ...elementsFromApsides(body.mu, body.radius + Math.min(pe, ap), body.radius + Math.max(pe, ap)), argPeri: 0 };
+}
+
+/** Plain one-line description of a preset orbit. */
+function presetSub(body, p) {
+  const a = presetAlts(body, p);
+  const e = elementsFor(body, a.pe, a.ap);
+  const near = body.id === 'sun' ? 'close' : 'low';
+  const far = body.id === 'sun' ? 'far' : 'high';
+  if (e.e >= 0.6) return `A long oval. Fast when ${near}, slow when ${far}.`;
+  if (e.e >= 0.2) return `An oval. Fast when ${near}, slow when ${far}.`;
+  if (e.e >= 0.02) return `A slight oval. A little faster when ${near}.`;
+  const day = body.rotationHours * 3600;
+  if (body.id !== 'sun' && Math.abs(e.period - day) / day < 0.02) return 'Very far. Circles once a day and stays over one spot.';
+  if (body.id === 'sun') return `A round path. Circles the Sun in ${tripText(e.period)}.`;
+  const ratio = a.pe / body.radius;
+  const lead = ratio < 0.2 ? `Close to ${body.name}` : ratio < 1.5 ? 'Fairly high' : ratio < 10 ? 'High up' : 'Very far';
+  return `${lead}. Circles in ${tripText(e.period)}.`;
+}
+
+/** Short plain description of an orbit for the one-line summary. */
+function orbitWord(body, e, a) {
+  if (e.e >= 0.5) return 'long oval orbit';
+  if (e.e >= 0.02) return 'oval orbit';
+  if (body.id === 'sun') return 'round orbit';
+  const ratio = a.pe / body.radius;
+  return ratio < 0.2 ? 'low orbit' : ratio < 10 ? 'high orbit' : 'very far orbit';
 }
 
 /** Index in WARP_LADDER whose period-on-screen is closest to the target. */
@@ -226,7 +296,7 @@ function createSpeedGraph() {
 export default {
   id: 'orbits',
   label: 'Orbits',
-  panelTitles: { a: 'Orbit', b: 'Result', c: 'Time' },
+  panelTitles: { a: 'Orbit', b: 'What happens', c: 'Time' },
   _cleanup: [],
 
   mount(ctx) {
@@ -295,7 +365,7 @@ export default {
 
     function wedgeColors() {
       const th = spaceTheme();
-      return [new THREE.Color(th.accent), new THREE.Color(th.dark ? '#b8c2cf' : '#6b7684')];
+      return [new THREE.Color(th.accent), new THREE.Color(th.ink2)];
     }
     function disposeWedges() {
       for (const w of wedges) { w.mesh.geometry.dispose(); w.mat.dispose(); w.mesh.removeFromParent(); }
@@ -319,7 +389,7 @@ export default {
         }
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-        const base = i % 2 === 0 ? 0.2 : 0.2;
+        const base = 0.2;
         const mat = new THREE.MeshBasicMaterial({ color: cols[i % 2], transparent: true, opacity: base, side: THREE.DoubleSide, depthWrite: false });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.frustumCulled = false;
@@ -410,27 +480,21 @@ export default {
 
     // ================= PANEL A =================
     const bodySel = select({
-      label: 'Central body',
+      label: 'World',
       options: BODY_ORDER.map((id) => ({ value: id, label: BODIES[id].name })),
       value: store.get().bodyId,
-      onChange: (id) => {
-        store.set({ bodyId: id });
-        const list = ORBIT_PRESETS[id];
-        const a = presetAlts(BODIES[id], list[0]);
-        setOrb({ pe: a.pe, ap: a.ap, presetId: list[0].id });
-        bucket = null; elements = null;
-        setBody();
-        afterBodyChange();
-      },
+      onChange: (id) => changeBody(id),
     });
 
-    const presetList = el('div', { class: 'orb-list', role: 'radiogroup', 'aria-label': 'Preset orbits' });
+    const presetList = el('div', { class: 'orb-list', role: 'radiogroup', 'aria-label': 'Orbits' });
 
+    const heightFormat = (km) => (km >= MILLION ? `${fmt(km / MILLION, 1)} million` : fmt(km, 0));
+    /** Slider on a log scale of altitude in km. */
     function altSlider(label, onKm) {
       let override = null;
       const ctl = slider({
         label, min: 0, max: 1000, step: 1, value: 0, unit: 'km',
-        format: (pos) => fmt(override != null ? override : round3(posToKm(pos, RANGES[getBody().id])), 0),
+        format: (pos) => heightFormat(override != null ? override : round3(posToKm(pos, RANGES[getBody().id]))),
         onInput: (pos) => onKm(round3(posToKm(pos, RANGES[getBody().id]))),
       });
       return {
@@ -438,6 +502,17 @@ export default {
         setKm(km) { override = km; ctl.set(kmToPos(km, RANGES[getBody().id])); override = null; },
       };
     }
+
+    // The main slider: height of the lowest point. The highest point moves with it and keeps the same shape.
+    const heightSlider = altSlider('Height', (km) => setHeight(km));
+    const shapeCtl = segmented({
+      label: 'Shape',
+      options: [{ value: 'circle', label: 'Circle' }, { value: 'oval', label: 'Oval' }, { value: 'long', label: 'Long oval' }],
+      value: 'circle',
+      onChange: (v) => setShape(v),
+    });
+
+    // Detail controls (inside Show numbers): lowest and highest point.
     const peSlider = altSlider('Lowest point (altitude)', (km) => {
       const o = getOrb();
       userChange({ pe: km, ap: Math.max(o.ap, km) });
@@ -447,23 +522,13 @@ export default {
       userChange({ ap: km, pe: Math.min(o.pe, km) });
     });
     const circBtn = button({ label: 'Make circular', onClick: () => { const o = getOrb(); userChange({ ap: o.pe }); } });
-    const atmoBanner = banner({ kind: 'warn', text: 'This orbit dips into the atmosphere. It will not last.' });
-    atmoBanner.style.display = 'none';
-
-    panelA.append(
-      section('Central body', bodySel.el),
-      section('Orbits to try', presetList),
-      section('Your orbit', peSlider.el, apSlider.el, circBtn, atmoBanner),
-    );
 
     function renderPresetRows() {
       presetList.replaceChildren();
       const b = getBody();
       for (const p of ORBIT_PRESETS[b.id]) {
-        const a = presetAlts(b, p);
-        const sub = `${rangeText(a.pe, a.ap)}${Math.round(a.pe) === Math.round(a.ap) ? ', circular' : ''}${p.approx ? ', approximate' : ''}`;
         const row = el('div', { class: 'layer-row', role: 'radio', tabindex: '0', 'data-preset': p.id, 'data-clickable': 'true' },
-          el('div', { class: 'layer-main' }, el('div', { class: 'layer-name', text: p.name }), el('div', { class: 'layer-sub', text: sub })));
+          el('div', { class: 'layer-main' }, el('div', { class: 'layer-name', text: p.name }), el('div', { class: 'layer-sub', text: presetSub(b, p) })));
         const pick = () => applyPreset(p);
         row.addEventListener('click', pick);
         row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
@@ -471,7 +536,42 @@ export default {
       }
     }
 
+    const tryEl = tryThis([
+      { label: 'A low orbit', hint: 'Close in. Very fast.', run: () => goPreset('earth', 'iss', false) },
+      { label: 'A high orbit', hint: 'Far out. Slow. One trip takes a day.', run: () => goPreset('earth', 'geo', false) },
+      { label: 'A long oval', hint: 'It speeds up when it comes close.', run: () => goPreset('earth', 'molniya', false) },
+      { label: 'See the equal slices', hint: 'Each slice takes the same time.', run: () => goPreset('earth', 'molniya', true) },
+    ]);
+
+    panelA.append(el('div', { class: 'orb-stack' },
+      question('Why do some satellites circle fast and others slow?', 'Pick an orbit. Watch how its height changes its speed.'),
+      bodySel.el,
+      presetList,
+      el('div', { class: 'orb-stack', style: { gap: '12px' } }, heightSlider.el, shapeCtl.el),
+      tryEl,
+    ));
+
     // ================= PANEL B =================
+    const ans = answer({ kind: 'info', title: '', text: '' });
+    const atmoBanner = banner({ kind: 'warn', text: 'Too low. The air drags it down.' });
+    atmoBanner.style.display = 'none';
+
+    const liveEl = el('p', { class: 'orb-live' });
+    const barFill = el('div', { class: 'orb-bar-fill' });
+    const barTick = el('div', { class: 'orb-bar-tick' });
+    const barLo = el('span', { class: 'mono' });
+    const barHi = el('span', { class: 'mono' });
+    const speedBar = el('div', { class: 'orb-bar', 'data-numbers': 'false', role: 'img', 'aria-label': 'Current speed between the slowest and the fastest' },
+      el('div', { class: 'orb-bar-track' }, barFill, barTick),
+      el('div', { class: 'orb-bar-labels' }, el('span', {}, 'Slowest ', barLo), el('span', {}, 'Fastest ', barHi)));
+
+    const tripVal = el('strong');
+    const speedVal = el('strong');
+    const facts = el('div', { class: 'orb-facts' },
+      el('p', { class: 'orb-fact' }, 'Trip time: ', tripVal),
+      el('p', { class: 'orb-fact' }, 'Speed: ', speedVal));
+
+    // Detail: tiles, notes, compare table, speed graph, speed arrow switch.
     const sPeriod = stat({ label: 'Time for one orbit', value: 0, unit: 'min', source: "Kepler's third law", digits: 1 });
     const sVLow = stat({ label: 'Speed at the lowest point', value: 0, unit: 'km/s', source: 'Vis-viva equation', digits: 2 });
     const sVHigh = stat({ label: 'Speed at the highest point', value: 0, unit: 'km/s', source: 'Vis-viva equation', digits: 2 });
@@ -480,14 +580,6 @@ export default {
     const sAlt = stat({ label: 'Altitude now', value: 0, unit: 'km', digits: 0 });
     const sSpeedNow = stat({ label: 'Speed now', value: 0, unit: 'km/s', digits: 2 });
 
-    const barFill = el('div', { class: 'orb-bar-fill' });
-    const barTick = el('div', { class: 'orb-bar-tick' });
-    const barLo = el('span', { class: 'mono' });
-    const barHi = el('span', { class: 'mono' });
-    const speedBar = el('div', { class: 'orb-bar', role: 'img', 'aria-label': 'Current speed between the slowest and the fastest' },
-      el('div', { class: 'orb-bar-track' }, barFill, barTick),
-      el('div', { class: 'orb-bar-labels' }, el('span', {}, 'Slowest ', barLo), el('span', {}, 'Fastest ', barHi)));
-
     const note1 = el('p', { class: 'orb-note' });
     const note2 = el('p', { class: 'orb-note' });
     const note3 = el('p', { class: 'orb-note' });
@@ -495,12 +587,31 @@ export default {
 
     const tableEl = el('div', { class: 'orb-table', role: 'radiogroup', 'aria-label': 'Compare preset orbits' });
 
-    panelB.append(
+    const velToggle = toggle({ label: 'Show speed arrow', value: getOrb().showVelocity, onChange: (v) => { setOrb({ showVelocity: v }); update(0, true); stage.requestRender(); } });
+    const graph = createSpeedGraph();
+
+    const numbers = numbersSwitch(
+      {
+        value: !!getOrb().showNumbers,
+        onChange: (v) => { setOrb({ showNumbers: v }); speedBar.dataset.numbers = v ? 'true' : 'false'; },
+      },
+      section('Your orbit', peSlider.el, apSlider.el, circBtn),
       section('Key numbers', stats(sPeriod.el, sVLow.el, sVHigh.el, sAvg.el, sShape.el)),
-      section('Right now', stats(sAlt.el, sSpeedNow.el), speedBar),
+      section('Right now', stats(sAlt.el, sSpeedNow.el)),
       section('What this shows', notes),
+      section('Show on the 3D view', velToggle.el),
       section('Compare orbits', tableEl),
+      section('Speed around the orbit', graph.el),
     );
+    speedBar.dataset.numbers = numbers.get() ? 'true' : 'false';
+
+    panelB.append(el('div', { class: 'orb-stack' },
+      ans.el,
+      atmoBanner,
+      el('div', { class: 'orb-stack', style: { gap: '10px' } }, liveEl, speedBar),
+      facts,
+      numbers.el,
+    ));
 
     function renderTable() {
       tableEl.replaceChildren();
@@ -564,30 +675,54 @@ export default {
       }
     }
 
-    const velToggle = toggle({ label: 'Show speed arrow', value: getOrb().showVelocity, onChange: (v) => { setOrb({ showVelocity: v }); update(0, true); stage.requestRender(); } });
-    const areaCap = el('p', { class: 'orb-cap', text: 'Each wedge takes the same time and has the same area.' });
+    const areaCap = el('p', { class: 'orb-cap', text: 'Each slice takes the same time.' });
     const areaToggle = toggle({
-      label: 'Show equal areas', value: getOrb().showAreas,
-      onChange: (v) => { setOrb({ showAreas: v }); wedgeGroup.visible = v; areaCap.style.display = v ? '' : 'none'; wedges.forEach((w) => { w.mat.opacity = w.base; }); update(0, true); stage.requestRender(); },
+      label: 'Show equal slices', value: getOrb().showAreas,
+      onChange: (v) => setAreas(v),
     });
     areaCap.style.display = getOrb().showAreas ? '' : 'none';
-    const graph = createSpeedGraph();
 
-    panelC.append(
+    panelC.append(el('div', { class: 'orb-stack' },
       section('Playback', tcHost),
-      section('Show on the 3D view', velToggle.el, areaToggle.el, areaCap),
-      section('Speed around the orbit', graph.el),
-    );
+      section('Equal slices', areaToggle.el, areaCap),
+    ));
 
     // ================= repaint =================
-    function paintLive(s, t) {
+    function paintLive(s) {
       const alt = s.rMag - body.radius;
+      const up = alt >= MILLION ? `${fmt(alt / MILLION, 1)} million km` : `${fmt(alt, 0)} km`;
+      liveEl.textContent = `Right now: ${fmt(s.speed, 1)} km/s, ${up} ${body.id === 'sun' ? 'from the surface' : 'up'}.`;
       sAlt.update(alt >= MILLION ? { value: alt / MILLION, unit: 'million km', digits: 1 } : { value: alt, unit: 'km', digits: 0 });
       sSpeedNow.update({ value: s.speed, digits: 2 });
       const span = elements.vp - elements.va;
       const u = span > 1e-9 ? clamp((s.speed - elements.va) / span, 0, 1) : 0.5;
       barTick.style.left = `${(u * 100).toFixed(1)}%`;
       barFill.style.width = `${(u * 100).toFixed(1)}%`;
+    }
+
+    function paintAnswer() {
+      const o = getOrb();
+      const e = elements;
+      if (e.e < 0.02) {
+        const geo = body.id !== 'sun' && Math.abs(e.period - body.rotationHours * 3600) / (body.rotationHours * 3600) < 0.02;
+        ans.update({
+          kind: 'info',
+          title: 'A steady circle',
+          text: `It moves at the same speed all the way around. One trip takes ${tripText(e.period)}.${geo ? ` That is one day, so it stays over one spot on ${body.name}.` : ''}`,
+        });
+      } else if (o.showAreas) {
+        ans.update({
+          kind: 'info',
+          title: 'Equal slices, equal time',
+          text: 'Each slice takes the same time to cross. Close in it is short and wide, far out it is long and thin, but the area is the same.',
+        });
+      } else {
+        ans.update({
+          kind: 'info',
+          title: 'Fast when close, slow when far',
+          text: 'Gravity pulls it in and speeds it up. As it climbs away it slows down again.',
+        });
+      }
     }
 
     function paintResults() {
@@ -601,6 +736,7 @@ export default {
       sShape.update({ value: e.e, unit: shapeWord(e.e), digits: 2 });
       barLo.textContent = `${fmt(e.va, 2)} km/s`;
       barHi.textContent = `${fmt(e.vp, 2)} km/s`;
+      speedBar.hidden = e.e < 0.02;
 
       note1.textContent = e.e < 0.01
         ? 'The speed stays the same all the way around.'
@@ -610,28 +746,33 @@ export default {
       note3.textContent = geo ? 'One orbit takes one Earth day, so the craft stays above the same place.' : '';
       note3.style.display = geo ? '' : 'none';
 
-      const circ = Math.round(o.pe) === Math.round(o.ap);
-      let heights;
-      if (o.pe >= MILLION && o.ap >= MILLION) heights = circ ? `${fmt(o.pe / MILLION, 1)} million km` : `${fmt(o.pe / MILLION, 1)} × ${fmt(o.ap / MILLION, 1)} million km`;
-      else heights = `${fmt(o.pe, 0)} × ${fmt(o.ap, 0)} km`;
-      if (circ && o.pe >= 100000) heights = `${fmt(o.pe, 0)} km`;
-      summaryEl.textContent = `${body.name} · ${heights} · ${durText(e.period)}${circ ? ` · ${fmt(e.vp, 2)} km/s` : ''}`;
+      tripVal.textContent = tripText(e.period);
+      speedVal.textContent = speedText(e);
+      paintAnswer();
+
+      summaryEl.textContent = `${body.name} · ${orbitWord(body, e, { pe: o.pe })} · ${shortTrip(e.period)} per trip`;
 
       const atmo = body.atmosphere > 0 && o.pe < body.atmosphere;
       atmoBanner.style.display = atmo ? '' : 'none';
       for (const row of presetList.children) row.dataset.selected = row.dataset.preset === o.presetId ? 'true' : 'false';
       for (const row of presetList.children) row.setAttribute('aria-checked', row.dataset.selected);
       for (const row of tableEl.querySelectorAll('.orb-tr')) { row.dataset.selected = row.dataset.preset === o.presetId ? 'true' : 'false'; row.setAttribute('aria-checked', row.dataset.selected); }
+      shapeCtl.set(shapeKind(e.e));
       graph.setData(body, elements);
     }
 
     // ================= actions =================
+    function syncSliders() {
+      const o = getOrb();
+      heightSlider.setKm(o.pe);
+      peSlider.setKm(o.pe);
+      apSlider.setKm(o.ap);
+    }
+
     /** A slider or button changed the orbit. */
     function userChange(patch) {
       setOrb({ ...patch, presetId: null });
-      const o = getOrb();
-      peSlider.setKm(o.pe);
-      apSlider.setKm(o.ap);
+      syncSliders();
       rebuildGeometry(true, false);
       keepWarpSensible();
       paintResults();
@@ -639,11 +780,45 @@ export default {
       stage.requestRender();
     }
 
+    /** Height slider: move the lowest point and keep the same shape (how oval). */
+    function setHeight(km) {
+      const e = elements ? elements.e : 0;
+      const hi = RANGES[body.id][1];
+      const rp = body.radius + km;
+      const ra = e < 1e-6 ? rp : (rp * (1 + e)) / (1 - e);
+      userChange({ pe: km, ap: Math.max(km, Math.min(hi, ra - body.radius)) });
+    }
+
+    /** Shape control: keep the lowest point, raise the highest point to match the shape. */
+    function setShape(kind) {
+      const o = getOrb();
+      const e = SHAPE_E[kind];
+      if (e === 0) { userChange({ ap: o.pe }); return; }
+      const [lo, hi] = RANGES[body.id];
+      const R = body.radius;
+      let pe = o.pe;
+      let ap = ((R + pe) * (1 + e)) / (1 - e) - R;
+      if (ap > hi) { // too far for this world: lower the lowest point to keep the shape
+        ap = hi;
+        pe = Math.max(lo, round3(((R + hi) * (1 - e)) / (1 + e) - R));
+      }
+      userChange({ pe, ap });
+    }
+
+    function setAreas(v) {
+      setOrb({ showAreas: !!v });
+      areaToggle.set(!!v);
+      wedgeGroup.visible = !!v;
+      areaCap.style.display = v ? '' : 'none';
+      wedges.forEach((w) => { w.mat.opacity = w.base; });
+      if (elements) { paintAnswer(); update(0, true); }
+      stage.requestRender();
+    }
+
     function applyPreset(p) {
       const a = presetAlts(body, p);
       setOrb({ pe: a.pe, ap: a.ap, presetId: p.id });
-      peSlider.setKm(a.pe);
-      apSlider.setKm(a.ap);
+      syncSliders();
       rebuildGeometry(true, false);
       clock.reset(0);
       setDefaultWarp();
@@ -652,12 +827,29 @@ export default {
       stage.requestRender();
     }
 
+    function changeBody(id) {
+      store.set({ bodyId: id });
+      const list = ORBIT_PRESETS[id];
+      const a = presetAlts(BODIES[id], list[0]);
+      setOrb({ pe: a.pe, ap: a.ap, presetId: list[0].id });
+      bucket = null; elements = null;
+      setBody();
+      afterBodyChange();
+    }
+
+    /** "Try this" step: pick the world and the orbit, and set the equal slices switch. */
+    function goPreset(bodyId, presetId, areas) {
+      if (getBody().id !== bodyId) { bodySel.set(bodyId); changeBody(bodyId); }
+      const p = ORBIT_PRESETS[bodyId].find((x) => x.id === presetId);
+      if (!p) return;
+      applyPreset(p);
+      setAreas(areas);
+    }
+
     function afterBodyChange() {
-      const o = getOrb();
       renderPresetRows();
       renderTable();
-      peSlider.setKm(o.pe);
-      apSlider.setKm(o.ap);
+      syncSliders();
       rebuildGeometry(true, true);
       clock.reset(0);
       setDefaultWarp();
@@ -670,11 +862,7 @@ export default {
     setBody();
     renderPresetRows();
     renderTable();
-    {
-      const o = getOrb();
-      peSlider.setKm(o.pe);
-      apSlider.setKm(o.ap);
-    }
+    syncSliders();
     rebuildGeometry(true, true);
     clock.reset(0);
     {

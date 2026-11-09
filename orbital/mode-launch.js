@@ -7,8 +7,9 @@
 
 import { THREE } from '../shared/scene.js';
 import {
-  el, fmt, select, slider, button, toggle, section, stats, stat, banner, legend, row,
+  el, fmt, select, slider, button, toggle, section, stats, stat, legend, row, segmented,
 } from '../shared/ui.js';
+import { question, answer, tryThis, numbersSwitch } from '../shared/simple.js';
 import { BODIES, BODY_ORDER } from './bodies.js';
 import { propagate, formatDuration } from './physics.js';
 import {
@@ -54,6 +55,14 @@ function durParts(seconds) {
   const v = Math.abs(d.value);
   return { value: d.value, unit: d.unit, digits: v >= 100 ? 0 : v >= 10 ? 1 : 2 };
 }
+function plainTime(seconds) {
+  const d = formatDuration(seconds);
+  const v = Math.abs(d.value);
+  const unit = { s: 'seconds', min: 'minutes', h: 'hours', days: 'days' }[d.unit];
+  const digits = v >= 10 ? 0 : 1;
+  const shown = Number(v.toFixed(digits));
+  return `${fmt(d.value, digits)} ${shown === 1 ? unit.replace(/s$/, '') : unit}`;
+}
 function flightPerSecond(warp) {
   const d = formatDuration(warp);
   const v = Math.abs(d.value);
@@ -78,12 +87,28 @@ const CSS = `
 }
 .launch-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .launch-btns .btn { flex: 1 1 auto; }
+.launch-stack { display: flex; flex-direction: column; gap: 16px; }
+.launch-more { display: flex; flex-direction: column; gap: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.launch-more[hidden] { display: none; }
+.launch-speed-hint { margin-top: -4px; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
+.launch-gauge { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px 0; }
+.launch-gauge-title { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 0 -4px 2px; }
+.launch-gauge-top, .launch-gauge-bot { position: relative; height: 16px; font-size: 12px; line-height: 16px; color: var(--ink); white-space: nowrap; }
+.launch-gauge-top span, .launch-gauge-bot span { position: absolute; top: 0; }
+.launch-gauge-you { transform: translateX(-50%); font-weight: 600; }
+.launch-gauge-bar { position: relative; height: 10px; border-radius: 5px; background: var(--paper-3); border: 1px solid var(--line-strong); }
+.launch-gauge-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--accent); opacity: 0.35; }
+.launch-gauge-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--ink); }
+.launch-gauge-dot { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper-2); box-shadow: 0 0 0 1px var(--ink); }
+.launch-gauge-lbl-orbit { transform: translateX(-100%); padding-right: 5px; }
+.launch-gauge-lbl-escape { padding-left: 5px; }
+.launch-gauge-lbl-orbit::after { content: ''; }
 `;
 
 export default {
   id: 'launch',
   label: 'Launch',
-  panelTitles: { a: 'Launch', b: 'Result', c: 'Time' },
+  panelTitles: { a: 'Launch', b: 'What happens', c: 'Time' },
   _cleanup: [],
 
   mount(ctx) {
@@ -105,7 +130,8 @@ export default {
     (function ensureState() {
       const s = store.get();
       const body = BODIES[s.bodyId] || BODIES.earth;
-      let L = { showPath: true, showArrow: true, warp: 0, ...s.launch };
+      let L = { showPath: true, showArrow: true, warp: 0, showNumbers: false, ...s.launch };
+      L.showNumbers = !!L.showNumbers;
       const [lo, hi] = ALT_RANGE[body.id];
       if ((L.forBody ?? 'earth') !== body.id || !(L.alt >= lo && L.alt <= hi)) {
         const d = defaultLaunch(body);
@@ -161,11 +187,17 @@ export default {
     const liveAlt = el('span', {}, el('span', { text: 'Altitude' }), el('b', { text: '' }));
     const liveSpd = el('span', {}, el('span', { text: 'Speed' }), el('b', { text: '' }));
     const liveTim = el('span', {}, el('span', { text: 'Time' }), el('b', { text: '' }));
-    const overlay = el('div', { class: 'launch-live', 'aria-hidden': 'true' }, liveAlt, liveSpd, liveTim);
+    const liveSimple = el('span', {}, el('b', { text: '' }));
+    const overlay = el('div', { class: 'launch-live', 'aria-hidden': 'true' }, liveSimple, liveAlt, liveSpd, liveTim);
+    const paintOverlayMode = () => {
+      const on = !!getL().showNumbers;
+      liveAlt.style.display = liveSpd.style.display = liveTim.style.display = on ? '' : 'none';
+      liveSimple.style.display = on ? 'none' : '';
+    };
     const note = el('div', { class: 'launch-note' });
     stageEl.append(overlay, note);
     cleanup.push(() => { overlay.remove(); note.remove(); });
-    const txt = { alt: '', spd: '', tim: '' };
+    const txt = { alt: '', spd: '', tim: '', plain: '' };
 
     const sAlt = stat({ label: 'Altitude', value: '—', unit: 'km' });
     const sSpd = stat({ label: 'Speed', value: '—', unit: 'km/s' });
@@ -180,6 +212,10 @@ export default {
       const altS = gone ? 'Gone' : `${fmt(alt, alt >= 100 ? 0 : 1)} km`;
       const spdS = `${fmt(spd, 2)} km/s`;
       const timS = durText(sim.t);
+      const plainS = sim.ended === 'impact' ? `Landed after ${plainTime(sim.t)}`
+        : gone ? `Gone after ${plainTime(sim.t)}`
+          : sim.t < 1 ? 'At launch' : `${plainTime(sim.t)} after launch`;
+      if (plainS !== txt.plain) { txt.plain = plainS; liveSimple.lastChild.textContent = plainS; }
       if (altS !== txt.alt) { txt.alt = altS; liveAlt.lastChild.textContent = altS; sAlt.update(gone ? { value: 'Gone', unit: '' } : { value: alt, unit: 'km', digits: alt >= 100 ? 0 : 1 }); }
       if (spdS !== txt.spd) { txt.spd = spdS; liveSpd.lastChild.textContent = spdS; sSpd.update({ value: spd, unit: 'km/s', digits: 2 }); }
       if (timS !== txt.tim) { txt.tim = timS; liveTim.lastChild.textContent = timS; const d = durParts(sim.t); sTim.update({ value: d.value, unit: d.unit, digits: d.digits }); }
@@ -187,7 +223,7 @@ export default {
 
     // ---------- panel A: Launch ----------
     const bodySel = select({
-      label: 'Central body',
+      label: 'World',
       options: BODY_ORDER.map((id) => ({ value: id, label: BODIES[id].name })),
       value: store.get().bodyId,
       onChange: (id) => {
@@ -199,7 +235,58 @@ export default {
       },
     });
 
+    function physicsHere() {
+      const b = bodyOf();
+      const r0 = b.radius + getL().alt;
+      return { b, vc: Math.sqrt(b.mu / r0), ve: Math.sqrt((2 * b.mu) / r0) };
+    }
+    // Plain words for a speed, compared with orbit speed and escape speed at the start height.
+    function speedWords(speed) {
+      const { vc, ve } = physicsHere();
+      const r = speed / vc;
+      if (speed < 1e-6) return 'no speed, just let go';
+      if (r < 0.95) return 'slower than orbit speed';
+      if (r <= 1.05) return 'as fast as an orbit needs';
+      if (speed < ve * 0.999) return 'faster than orbit speed';
+      return 'fast enough to escape';
+    }
+    function speedShort(speed) {
+      const { vc, ve } = physicsHere();
+      const r = speed / vc;
+      if (speed < 1e-6) return 'no speed';
+      if (r < 0.95) return `${fmt(r * 100, 0)}% of orbit speed`;
+      if (r <= 1.05) return 'orbit speed';
+      if (speed < ve * 0.999) return 'faster than orbit speed';
+      return 'escape speed or more';
+    }
+
     let busy = null; // the slider the person is dragging right now
+    const speedS = slider({
+      label: 'Speed', min: 0, max: SPEED_STEPS, step: 1, value: 0, unit: '',
+      format: () => `${fmt((getL().speed / physicsHere().vc) * 100, 0)}% of orbit speed`,
+      onInput: (pos) => {
+        const b = bodyOf();
+        busy = 'speed';
+        setL({ speed: (pos / SPEED_STEPS) * maxSpeed(b, getL().alt) });
+        busy = null;
+        speedS.set(speedS.get());
+      },
+    });
+    const speedHint = el('div', { class: 'launch-speed-hint' });
+
+    const DIRS = [
+      { value: '0', label: 'Sideways', deg: 0 },
+      { value: '45', label: 'Up at an angle', deg: 45 },
+      { value: '90', label: 'Straight up', deg: 90 },
+    ];
+    const dirSeg = segmented({
+      label: 'Direction',
+      options: DIRS.map((d) => ({ value: d.value, label: d.label })),
+      value: '0',
+      onChange: (v) => setL({ angleDeg: Number(v) }),
+    });
+
+    // More controls, shown with the numbers.
     const altS = slider({
       label: 'Start height above the surface', min: 0, max: ALT_STEPS, step: 0.5, value: 0, unit: 'km',
       format: () => fmt(getL().alt, 0),
@@ -212,18 +299,6 @@ export default {
         altS.set(altS.get());
       },
     });
-    const speedS = slider({
-      label: 'Launch speed', min: 0, max: SPEED_STEPS, step: 1, value: 0, unit: 'km/s',
-      format: () => fmt(getL().speed, 2),
-      onInput: (pos) => {
-        const b = bodyOf();
-        busy = 'speed';
-        setL({ speed: (pos / SPEED_STEPS) * maxSpeed(b, getL().alt) });
-        busy = null;
-        speedS.set(speedS.get());
-      },
-    });
-    const speedHint = el('div', { class: 'launch-hint' });
     const angleS = slider({
       label: 'Launch angle', min: -30, max: 90, step: 1, value: 0, unit: '°',
       format: () => fmt(getL().angleDeg, 0),
@@ -235,21 +310,42 @@ export default {
       },
     });
     const angleHint = el('div', { class: 'launch-hint', text: '0° is level with the ground. 90° is straight up.' });
-
-    function physicsHere() {
-      const b = bodyOf();
-      const r0 = b.radius + getL().alt;
-      return { b, vc: Math.sqrt(b.mu / r0), ve: Math.sqrt((2 * b.mu) / r0) };
-    }
+    const exactSpeedHint = el('div', { class: 'launch-hint' });
     const bDrop = button({ label: 'Drop', onClick: () => setL({ speed: 0 }) });
     const bCirc = button({ label: 'Circular speed', onClick: () => setL({ speed: physicsHere().vc, angleDeg: 0 }) });
     const bEsc = button({ label: 'Escape speed', onClick: () => setL({ speed: physicsHere().ve, angleDeg: 0 }) });
+    const moreA = el('div', { class: 'launch-more' },
+      altS.el, exactSpeedHint, angleS.el, angleHint,
+      section('Quick settings', el('div', { class: 'launch-btns' }, bDrop, bCirc, bEsc)));
 
-    panelA.append(
-      section('Body', bodySel.el),
-      section('Launch', altS.el, speedS.el, speedHint, angleS.el, angleHint),
-      section('Quick settings', el('div', { class: 'launch-btns' }, bDrop, bCirc, bEsc)),
-    );
+    // "Try this" steps set the controls and start the flight again.
+    let playNext = false;
+    function goStep(patch) {
+      const before = getL();
+      const b = bodyOf();
+      const { vc, ve } = physicsHere();
+      const p = typeof patch === 'function' ? patch(vc, ve) : patch;
+      const speed = clamp(p.speed, 0, maxSpeed(b, before.alt));
+      const angleDeg = p.angleDeg;
+      const same = Math.abs(before.speed - speed) < 1e-12 && before.angleDeg === angleDeg;
+      playNext = true;
+      if (same) { restartSim(true); playNext = false; } else setL({ speed, angleDeg });
+    }
+    const tryBox = tryThis([
+      { label: 'Drop it', hint: 'No speed at all', run: () => goStep({ speed: 0, angleDeg: 0 }) },
+      { label: 'Throw it sideways, slowly', hint: 'About 60% of orbit speed', run: () => goStep((vc) => ({ speed: 0.6 * vc, angleDeg: 0 })) },
+      { label: 'Throw it at orbit speed', hint: 'Just right', run: () => goStep((vc) => ({ speed: vc, angleDeg: 0 })) },
+      { label: 'Throw it very fast', hint: 'A little over escape speed', run: () => goStep((vc, ve) => ({ speed: ve * 1.02, angleDeg: 0 })) },
+    ]);
+
+    panelA.append(el('div', { class: 'launch-stack' },
+      question('How fast must you throw something so it never comes down?', 'Pick a world and a speed. Watch what happens.'),
+      bodySel.el,
+      el('div', { class: 'launch-stack', style: { gap: '8px' } }, speedS.el, speedHint),
+      dirSeg.el,
+      tryBox,
+      moreA,
+    ));
 
     // ---------- panel C: Time ----------
     const timeBox = el('div');
@@ -263,11 +359,8 @@ export default {
     ]);
     key.lastChild.querySelector('.swatch').style.border = '2px solid var(--ink)';
     const exagNote = el('div', { class: 'launch-hint' });
-    panelC.append(
-      section('Playback', timeBox, autoHint),
-      section('Show', row(togPath.el), row(togArrow.el)),
-      section('Key', key, exagNote),
-    );
+    const moreC = el('div', { class: 'launch-more' }, autoHint, row(togPath.el), row(togArrow.el), key, exagNote);
+    panelC.append(el('div', { class: 'launch-stack' }, timeBox, moreC));
 
     let tc = null;
     function buildTime() {
@@ -303,19 +396,58 @@ export default {
       autoHint.textContent = getL().warp === 0 ? `Auto speed: ${flightPerSecond(w)}.` : `${flightPerSecond(w)}.`;
     }
 
-    // ---------- panel B: Result ----------
-    const bannerBox = el('div');
-    let bannerKey = '';
+    // ---------- panel B: What happens ----------
+    const ans = answer({ kind: 'info', title: '' });
+
+    // speed gauge: a bar from 0 to the top of the slider, ticks for orbit speed and escape speed, a marker for now
+    const gTop = el('div', { class: 'launch-gauge-top' });
+    const gYou = el('span', { class: 'launch-gauge-you', text: 'Your speed' });
+    gTop.append(gYou);
+    const gFill = el('div', { class: 'launch-gauge-fill' });
+    const gTickO = el('div', { class: 'launch-gauge-tick' });
+    const gTickE = el('div', { class: 'launch-gauge-tick' });
+    const gDot = el('div', { class: 'launch-gauge-dot' });
+    const gBar = el('div', { class: 'launch-gauge-bar' }, gFill, gTickO, gTickE, gDot);
+    const gLblO = el('span', { class: 'launch-gauge-lbl-orbit', text: 'Orbit speed' });
+    const gLblE = el('span', { class: 'launch-gauge-lbl-escape', text: 'Escape speed' });
+    const gBot = el('div', { class: 'launch-gauge-bot' }, gLblO, gLblE);
+    const gauge = el('div', { class: 'launch-gauge', role: 'img' },
+      el('div', { class: 'launch-gauge-title', text: 'Speed gauge' }), gTop, gBar, gBot);
+    function paintGauge(m) {
+      const top = maxSpeed(m.body, m.alt);
+      const pOrbit = (m.vc / top) * 100;
+      const pEsc = (m.ve / top) * 100;
+      const pNow = clamp((m.speed / top) * 100, 0, 100);
+      gTickO.style.left = `${pOrbit}%`;
+      gTickE.style.left = `${pEsc}%`;
+      gLblO.style.left = `${pOrbit}%`;
+      gLblE.style.left = `${pEsc}%`;
+      gDot.style.left = `${pNow}%`;
+      gFill.style.width = `${pNow}%`;
+      gYou.style.left = `${clamp(pNow, 14, 86)}%`;
+      gauge.setAttribute('aria-label', `Your speed is ${speedShort(m.speed)}. Orbit speed and escape speed are marked on the bar.`);
+    }
+
     const tilesBox = stats();
     let tileSig = '';
     let tiles = {};
     const whyBox = el('div', { class: 'launch-why' });
-    panelB.append(
-      bannerBox,
-      section('Numbers', tilesBox),
-      section('Why', whyBox),
-      section('Right now', stats(sAlt.el, sSpd.el, sTim.el)),
-    );
+    const numbers = numbersSwitch({
+      value: !!getL().showNumbers,
+      onChange: (v) => { if (getL().showNumbers !== v) setL({ showNumbers: v }); },
+    },
+    section('Numbers', tilesBox),
+    section('Why', whyBox),
+    section('Right now', stats(sAlt.el, sSpd.el, sTim.el)));
+    panelB.append(el('div', { class: 'launch-stack' }, ans.el, gauge, numbers.el));
+
+    function applyNumbers() {
+      const on = !!getL().showNumbers;
+      moreA.hidden = !on;
+      moreC.hidden = !on;
+      if (numbers.get() !== on) numbers.set(on);
+      paintOverlayMode();
+    }
 
     function tileDefs(m) {
       const defs = [
@@ -353,11 +485,8 @@ export default {
     function paintResults() {
       const m = model;
       const d = describe(m, fmt);
-      const bk = `${d.kind}|${d.title}`;
-      if (bk !== bannerKey) {
-        bannerKey = bk;
-        bannerBox.replaceChildren(banner({ kind: d.kind, title: d.title, text: d.text }));
-      }
+      ans.update({ kind: d.kind, title: d.title, text: d.text });
+      paintGauge(m);
       const defs = tileDefs(m);
       const sig = defs.map((x) => x.key).join(',');
       if (sig !== tileSig) {
@@ -377,11 +506,10 @@ export default {
         whyBox.replaceChildren(...d.why.map((t) => el('p', { text: t })));
       }
       const b = m.body;
-      const S = m.stats;
-      const tail = m.outcome === 'orbit' ? `orbit, ${durText(S.period)}`
-        : m.outcome === 'decay' ? 'orbit too low'
-          : m.outcome === 'impact' ? `impact in ${durText(S.tImpact)}` : 'escape';
-      summaryEl.textContent = `${b.name} · ${fmt(m.speed, 2)} km/s at ${fmt(m.alt, 0)} km · ${tail}`;
+      const tail = m.outcome === 'orbit' ? 'stays in orbit'
+        : m.outcome === 'decay' ? 'skims the air and comes down'
+          : m.outcome === 'impact' ? 'falls back' : 'escapes';
+      summaryEl.textContent = `${b.name} · ${speedShort(m.speed)} · ${tail}`;
     }
 
     // ---------- controls follow the store ----------
@@ -393,7 +521,9 @@ export default {
       if (busy !== 'alt') altS.set(posOfAlt(b, L.alt)); else altS.set(altS.get());
       if (busy !== 'speed') speedS.set((L.speed / maxSpeed(b, L.alt)) * SPEED_STEPS); else speedS.set(speedS.get());
       if (busy !== 'angle') angleS.set(L.angleDeg); else angleS.set(angleS.get());
-      speedHint.textContent = `Circular speed here is ${fmt(vc, 2)} km/s. Escape speed is ${fmt(ve, 2)} km/s.`;
+      dirSeg.set(DIRS.some((d) => d.deg === L.angleDeg) ? String(L.angleDeg) : '');
+      speedHint.textContent = `${fmt(L.speed, 1)} km/s, ${speedWords(L.speed)}`;
+      exactSpeedHint.textContent = `Circular speed here is ${fmt(vc, 2)} km/s. Escape speed is ${fmt(ve, 2)} km/s. Launch speed is ${fmt(L.speed, 2)} km/s.`;
       togPath.set(L.showPath);
       togArrow.set(L.showArrow);
     }
@@ -525,7 +655,8 @@ export default {
       // Look almost straight down on the orbit plane: from a lower angle the body hides the far half of a low path.
       if (rescaled) frameSpace(stage, 100, { elevationDeg: 82, azimuthDeg: 0 });
       applyWarp();
-      restartSim();
+      restartSim(playNext);
+      playNext = false;
       paintResults();
       stage.requestRender();
     }
@@ -556,10 +687,12 @@ export default {
       const physics = s.bodyId !== prev.bodyId || a.alt !== b.alt || a.speed !== b.speed || a.angleDeg !== b.angleDeg;
       if (physics) { syncControls(); schedule(); }
       else if (a.showPath !== b.showPath || a.showArrow !== b.showArrow) { syncControls(); applyFlags(); }
+      if (a.showNumbers !== b.showNumbers) applyNumbers();
     });
     cleanup.push(unsub);
 
     // first build
+    applyNumbers();
     syncControls();
     recompute();
     cleanup.push(stage.onFrame((dt) => { frameDt = dt; update(); }));

@@ -22,6 +22,15 @@
 //   createViewer sets the stage camera FOV to 25 degrees (nearly orthographic look). frame() fits the
 //   bounding sphere once. Nothing else in this file ever moves the camera except the turntable spin.
 //
+// LOOK (studio table model)
+//   Glossy MeshPhysicalMaterial atoms (clearcoat) lit by a PMREM environment built once per renderer from
+//   RoomEnvironment (no downloads), metals get metalness and a tint, bonds are glossy model-kit rods, a soft
+//   footprint blob plus an optional shadow-map shadow ground the structure, fog fades the far side, and the
+//   overlays (cell, hbonds, planes, arrows, halo, measure) are unlit/untonemapped so they stay crisp.
+//   Material tiers: more than 600 atoms use MeshStandardMaterial (same env map); shadow map off above 1,200 atoms.
+//   Extra API: createViewer(stage, { metalElements, envIntensity, shadows }), structure.hbonds [{a,b}] drawn dashed,
+//   configureRenderer(stage) (ACES filmic + sRGB + shadow map, called from molecules/main.js).
+//
 // THEME
 //   Rim, bond gray, cell lines, planes, labels and measure marks follow the CSS tokens and redraw on
 //   prefers-color-scheme change (through stage.onTheme).
@@ -29,6 +38,10 @@
 import { THREE } from '../shared/scene.js';
 import { section, segmented, toggle, button } from '../shared/ui.js';
 import { ELEMENTS } from './elements.js';
+import { RoomEnvironment } from '../vendor/addons/RoomEnvironment.js';
+import { LineSegments2 } from '../vendor/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from '../vendor/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from '../vendor/addons/lines/LineMaterial.js';
 
 export const STYLE_OPTIONS = [
   { value: 'ball-stick', label: 'Ball and stick' },
@@ -41,6 +54,8 @@ const FOV = 25;
 const SPIN_RATE = 0.2;        // rad per second, about 11 degrees per second
 const TEXT_SCALE = 3;         // label canvas pixels per CSS pixel
 const LABEL_MAX_ATOMS = 150;
+const PHYSICAL_MAX_ATOMS = 600;   // above this, MeshStandardMaterial replaces MeshPhysicalMaterial
+const SHADOW_MAX_ATOMS = 1200;    // above this, no shadow map (the soft footprint blob stays)
 const TAP_PICK_PX = 16;       // screen-space pick tolerance when the ray misses
 
 // Built-in element table used for any element missing from ELEMENTS (CPK-style colors, radii in Å).
@@ -101,9 +116,84 @@ function readTheme() {
     accent: get('--accent', dark ? '#58a6e0' : '#1f5fa8'),
     hot: get('--hot', dark ? '#ff9a5c' : '#c4491f'),
     // rim: ink pulled toward the stage background so it reads as an outline, not a black ring
-    rim: new THREE.Color(ink).lerp(new THREE.Color(bg), dark ? 0.38 : 0.12).getStyle(),
-    bond: dark ? '#a3abb5' : '#7b838d',
+    rim: new THREE.Color(ink).lerp(new THREE.Color(bg), dark ? 0.5 : 0.5).getStyle(),
+    bond: dark ? '#939ba7' : '#b4bac2',
+    // fog and floor match the middle of the CSS stage vignette in molecules/index.html
+    hb: dark ? '#7fc1f2' : '#2a7bc4',
+    fog: dark ? '#23272d' : '#f4f5f7',
+    shadow: dark ? '#05070a' : '#2a3342',
   };
+}
+
+// ---------- environment map (one PMREM per renderer, cached at module level) ----------
+const envCache = new WeakMap();
+function getEnvironment(renderer) {
+  let rec = envCache.get(renderer);
+  if (rec) return rec.texture;
+  const pm = new THREE.PMREMGenerator(renderer);
+  const room = new RoomEnvironment();
+  const target = pm.fromScene(room, 0.035);
+  room.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  pm.dispose();
+  rec = { target, texture: target.texture };
+  envCache.set(renderer, rec);
+  window.addEventListener('pagehide', () => { try { target.dispose(); } catch (e) { /* ignore */ } }, { once: true });
+  return rec.texture;
+}
+
+/**
+ * Studio output settings for the molecules renderer: ACES filmic tone mapping, sRGB output, soft shadow map
+ * that is only re-rendered when the viewer asks for it. Safe to call more than once.
+ * @param {{renderer: THREE.WebGLRenderer|null}} stage
+ * @param {{exposure?:number}} [o]
+ */
+export function configureRenderer(stage, o = {}) {
+  const r = stage && stage.renderer;
+  if (!r) return;
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  r.toneMappingExposure = o.exposure || 1.0;
+  r.outputColorSpace = THREE.SRGBColorSpace;
+  r.shadowMap.enabled = true;
+  r.shadowMap.type = THREE.PCFSoftShadowMap;
+  r.shadowMap.autoUpdate = false;
+}
+
+// ---------- metals ----------
+const DEFAULT_METALS = ['Fe', 'Al', 'Cu', 'Zn', 'Ti', 'Mg', 'Na', 'Ca', 'Cs'];
+// display tint of the bare metal (reflectance color), richer than a flat CPK swatch
+const METAL_TINT = {
+  Fe: '#a79f98', Al: '#dde1e6', Cu: '#e08a57', Zn: '#a7aec6', Ti: '#aeb2ba',
+  Mg: '#b9c9b4', Na: '#c1aedd', Ca: '#b7c4b2', Cs: '#b497d4',
+};
+
+// ---------- small textures (canvas) ----------
+function makeGlowTexture(kind) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  if (kind === 'ring') {
+    // soft glow ring: clear center, bright band near 0.62, feathered both sides
+    grd.addColorStop(0, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.42, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.58, 'rgba(255,255,255,0.55)');
+    grd.addColorStop(0.66, 'rgba(255,255,255,0.95)');
+    grd.addColorStop(0.74, 'rgba(255,255,255,0.45)');
+    grd.addColorStop(0.88, 'rgba(255,255,255,0.1)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+  } else {
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+    grd.addColorStop(0.7, 'rgba(255,255,255,0.14)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+  }
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = false;
+  t.minFilter = THREE.LinearFilter;
+  return t;
 }
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -136,6 +226,7 @@ function createLabelRec(text, kind, themeRef, extra = {}) {
   tex.generateMipmaps = false;
   const mat = new THREE.SpriteMaterial({
     map: tex, transparent: true, sizeAttenuation: false, depthWrite: false, depthTest: !!extra.depthTest,
+    fog: false, toneMapped: false,
   });
   const rec = { tex, mat, w: 10, h: 10, text, kind };
   const px = extra.px || 12;
@@ -255,7 +346,41 @@ export function createViewer(stage, opts = {}) {
   const gArrows = new THREE.Group();
   const gHalo = new THREE.Group();
   const gMeasure = new THREE.Group();
-  group.add(gRims, gAtoms, gBonds, gCell, gPlanes, gHalo, gLabels, gArrows, gMeasure);
+  const gFloor = new THREE.Group();
+  const gHb = new THREE.Group();
+  group.add(gFloor, gRims, gAtoms, gBonds, gHb, gCell, gPlanes, gHalo, gLabels, gArrows, gMeasure);
+
+  // ----- studio: renderer output, environment, lights, fog -----
+  configureRenderer(stage);
+  const renderer = stage.renderer || null;
+  let env = null;
+  if (renderer) {
+    try { env = getEnvironment(renderer); } catch (e) { console.warn('Environment map not available', e); }
+  }
+  const envIntensity = opts.envIntensity != null ? opts.envIntensity : 1;
+  const metalSet = new Set(opts.metalElements || DEFAULT_METALS);
+  const shadowsWanted = opts.shadows !== false;
+  // The stage's own flat lights are replaced by the environment plus a shadow-casting key light.
+  const stageLights = [];
+  stage.scene.traverse((o) => { if (o.isLight && o.visible) { stageLights.push(o); o.visible = false; } });
+  const keyLight = new THREE.DirectionalLight(0xfff6ea, 1.9);
+  const fillLight = new THREE.DirectionalLight(0xdfe9ff, 0.55);
+  const keyDir = new THREE.Vector3(-0.42, 0.86, 0.62).normalize();     // from upper left, toward the viewer
+  fillLight.position.set(0.8, 0.25, -0.5);
+  keyLight.castShadow = false;
+  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.bias = -0.0004;
+  group.add(keyLight, keyLight.target, fillLight, fillLight.target);
+  const fog = new THREE.Fog(readTheme().fog, 10, 100);
+  const prevFog = stage.scene.fog;
+  stage.scene.fog = fog;
+  const prevSceneBefore = stage.scene.onBeforeRender;
+  // depth cueing follows the camera distance every render (no allocations): the far side of a block recedes
+  stage.scene.onBeforeRender = function fogUpdate(r, sc, cam) {
+    const d = cam.position.distanceTo(center);
+    fog.near = Math.max(0.01, d - frameRadius * 0.35);
+    fog.far = d + frameRadius * 4.4;
+  };
 
   const state = {
     structure: null,
@@ -278,7 +403,6 @@ export function createViewer(stage, opts = {}) {
   let sphereGeo = null;
   let rimGeo = null;
   let cylGeo = null;
-  const haloGeo = new THREE.SphereGeometry(1, 20, 14);
   const dashGeo = new THREE.CylinderGeometry(1, 1, 1, 6, 1, false);
   const arrowShaftGeo = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false);
   const arrowHeadGeo = new THREE.ConeGeometry(1, 1, 16, 1, false);
@@ -328,11 +452,61 @@ export function createViewer(stage, opts = {}) {
     return (0.1 + 0.34 * e.cov) * sc;
   }
 
+  // ---------- materials ----------
+  const hsl = { h: 0, s: 0, l: 0 };
+  function displayColor(el, info, metal) {
+    const c = new THREE.Color(metal && METAL_TINT[el] ? METAL_TINT[el] : info.color);
+    if (!metal) {
+      // a little richer than the flat swatch so ACES filmic does not wash it out
+      c.getHSL(hsl, THREE.SRGBColorSpace);
+      // near-white (hydrogen) is pulled down a touch so the shading shows instead of clipping
+      c.setHSL(hsl.h, clamp(hsl.s * 1.12, 0, 1), hsl.l > 0.8 ? hsl.l * 0.84 : hsl.l, THREE.SRGBColorSpace);
+    }
+    return c;
+  }
+
+  function atomMaterial(el, info, op, tier, byTag, hasNonMetal) {
+    const isMetal = metalSet.has(el);
+    const pureMetal = isMetal && !(hasNonMetal && !state.opts.metalInCompounds);
+    const color = byTag ? new THREE.Color(0xffffff) : displayColor(el, info, pureMetal);
+    const common = { color, envMap: env, envMapIntensity: envIntensity };
+    if (op < 1) {
+      // ghost atoms: frosted, translucent, no gloss
+      return new THREE.MeshStandardMaterial({
+        ...common, roughness: 0.62, metalness: 0, envMapIntensity: envIntensity * 0.55,
+        transparent: true, opacity: op, depthWrite: false,
+      });
+    }
+    if (pureMetal) {
+      const P = { ...common, metalness: 0.94, roughness: 0.24, envMapIntensity: envIntensity * 1.25 };
+      return tier === 'physical'
+        ? new THREE.MeshPhysicalMaterial({ ...P, clearcoat: 0.25, clearcoatRoughness: 0.2 })
+        : new THREE.MeshStandardMaterial(P);
+    }
+    const metalness = isMetal ? 0.22 : 0;       // ions: a hint of sheen
+    const roughness = 0.3;
+    return tier === 'physical'
+      ? new THREE.MeshPhysicalMaterial({ ...common, metalness, roughness, clearcoat: 0.8, clearcoatRoughness: 0.12 })
+      : new THREE.MeshStandardMaterial({ ...common, metalness, roughness: 0.3 });
+  }
+
+  function bondMaterial(op, sticks, tier) {
+    const P = {
+      color: sticks ? 0xffffff : theme.bond, envMap: env, envMapIntensity: envIntensity * 0.9,
+      metalness: sticks ? 0 : 0.35, roughness: sticks ? 0.3 : 0.28,
+      transparent: op < 1, opacity: op, depthWrite: op >= 1,
+    };
+    if (op < 1) return new THREE.MeshStandardMaterial({ ...P, metalness: 0, roughness: 0.6, envMapIntensity: envIntensity * 0.5 });
+    return tier === 'physical'
+      ? new THREE.MeshPhysicalMaterial({ ...P, clearcoat: 0.6, clearcoatRoughness: 0.15 })
+      : new THREE.MeshStandardMaterial(P);
+  }
+
   function clearBuilt() {
     atomMeshes.length = 0;
     rimMats.length = 0;
     bondMat = [];
-    emptyGroup(gAtoms); emptyGroup(gRims); emptyGroup(gBonds); emptyGroup(gLabels);
+    emptyGroup(gAtoms); emptyGroup(gRims); emptyGroup(gBonds); emptyGroup(gLabels); emptyGroup(gHb); emptyGroup(gFloor);
     if (sphereGeo) { sphereGeo.dispose(); sphereGeo = null; }
     if (rimGeo) { rimGeo.dispose(); rimGeo = null; }
     if (cylGeo) { cylGeo.dispose(); cylGeo = null; }
@@ -348,7 +522,8 @@ export function createViewer(stage, opts = {}) {
     const style = state.style;
     const byTag = state.opts.colorBy === 'tag';
     const tagColors = state.opts.tagColors || {};
-    const rimT = clamp(px() * 2.2, 0.02, 0.25);
+    const rimT = clamp(px() * 1.7, 0.015, 0.2);
+    const shadowOn = shadowsWanted && !!renderer && n <= SHADOW_MAX_ATOMS;
 
     // geometry detail by atom count
     const seg = n <= 150 ? 32 : n <= 800 ? 24 : 16;
@@ -371,17 +546,21 @@ export function createViewer(stage, opts = {}) {
       if (!g) { g = { el: atoms[i].el, op, idx: [] }; groups.set(key, g); }
       g.idx.push(i);
     }
+    const tier = n > PHYSICAL_MAX_ATOMS ? 'standard' : 'physical';
+    // metals read as metal only in pure-metal structures; a metal next to non-metals is an ion, so it stays glossy and colored
+    let hasNonMetal = false;
+    for (let i = 0; i < n && !hasNonMetal; i++) if (!metalSet.has(atoms[i].el)) hasNonMetal = true;
     for (const g of groups.values()) {
       const info = elemInfo(g.el);
       const cnt = g.idx.length;
-      const mat = new THREE.MeshStandardMaterial({
-        color: byTag ? 0xffffff : info.color, roughness: 0.42, metalness: 0,
-        transparent: g.op < 1, opacity: g.op, depthWrite: g.op >= 1,
-      });
+      const mat = atomMaterial(g.el, info, g.op, tier, byTag, hasNonMetal);
       const mesh = new THREE.InstancedMesh(sphereGeo, mat, cnt);
       mesh.userData.sharedGeometry = true;
       mesh.userData.indices = g.idx;
       mesh.frustumCulled = false;
+      const solid = g.op >= 1;
+      mesh.castShadow = solid && shadowOn;
+      mesh.receiveShadow = solid && shadowOn;
       if (g.op < 1) mesh.renderOrder = 1;
       const rmat = new THREE.MeshBasicMaterial({
         color: theme.rim, side: THREE.BackSide, transparent: g.op < 1, opacity: g.op, depthWrite: g.op >= 1,
@@ -412,7 +591,9 @@ export function createViewer(stage, opts = {}) {
       atomMeshes.push(mesh);
     }
 
-    if (style !== 'space-fill' && bonds.length) buildBonds(atoms, bonds, style);
+    if (style !== 'space-fill' && bonds.length) buildBonds(atoms, bonds, style, shadowOn, tier);
+    buildHbonds();
+    buildFloor(shadowOn);
     buildLabels();
     drawHalos();
     drawMeasure();
@@ -454,11 +635,11 @@ export function createViewer(stage, opts = {}) {
 
   function cylinderCount(order) { return order === 2 || order === 1.5 ? 2 : order === 3 ? 3 : 1; }
 
-  function buildBonds(atoms, bonds, style) {
+  function buildBonds(atoms, bonds, style, shadowOn, tier) {
     const sticks = style === 'sticks';
     const k = bondK();
     const rs = sticks ? 1.3 : 1;
-    const rimT = clamp(px() * 2.2, 0.02, 0.25);
+    const rimT = clamp(px() * 1.7, 0.015, 0.2);
     const nb = bonds.length;
     cylGeo = new THREE.CylinderGeometry(1, 1, 1, nb > 1500 ? 8 : 12, 1, false);
     // pass 1: count cylinders per opacity group
@@ -475,14 +656,13 @@ export function createViewer(stage, opts = {}) {
     const adj = needAdj ? buildAdj(atoms.length, bonds) : null;
     const meshes = new Map();
     for (const [op, c] of counts) {
-      const mat = new THREE.MeshStandardMaterial({
-        color: sticks ? 0xffffff : theme.bond, roughness: 0.5, metalness: 0,
-        transparent: op < 1, opacity: op, depthWrite: op >= 1,
-      });
+      const mat = bondMaterial(op, sticks, tier);
       bondMat.push(mat);
       const mesh = new THREE.InstancedMesh(cylGeo, mat, c);
       mesh.userData.sharedGeometry = true;
       mesh.frustumCulled = false;
+      mesh.castShadow = shadowOn && op >= 1;
+      mesh.receiveShadow = shadowOn && op >= 1;
       if (op < 1) mesh.renderOrder = 1;
       let rim = null;
       if (sticks) {
@@ -555,6 +735,119 @@ export function createViewer(stage, opts = {}) {
     }
   }
 
+
+  // ---------- hydrogen bonds (structure.hbonds, dashed thin lines) ----------
+  function buildHbonds() {
+    emptyGroup(gHb);
+    const st = state.structure;
+    if (!st || !Array.isArray(st.hbonds) || !st.hbonds.length) return;
+    const pts = [];
+    for (const h of st.hbonds) {
+      if (!visible[h.a] || !visible[h.b]) continue;
+      pts.push(atomPos[h.a], atomPos[h.b]);
+    }
+    if (!pts.length) return;
+    const k = bondK();
+    const ls = fatLines(pts, {
+      color: theme.hb, width: 1.6, dashed: true, dash: 0.1 * k, gap: 0.09 * k, opacity: 1,
+    });
+    ls.renderOrder = 2;
+    ls.userData.isHb = true;
+    gHb.add(ls);
+  }
+
+  // ---------- floor: footprint blob + shadow-map receiver, key light framing ----------
+  const blobSprite = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.45, 'rgba(255,255,255,0.45)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    return c;
+  })();
+
+  function buildFloor(shadowOn) {
+    emptyGroup(gFloor);
+    const st = state.structure;
+    keyLight.castShadow = false;
+    if (!st || !st.atoms.length) return;
+    const n = st.atoms.length;
+    let minY = Infinity; let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
+    for (let i = 0; i < n; i++) {
+      if (!visible[i]) continue;
+      const p = atomPos[i]; const r = radii[i];
+      if (p.y - r < minY) minY = p.y - r;
+      if (p.x - r < minX) minX = p.x - r;
+      if (p.x + r > maxX) maxX = p.x + r;
+      if (p.z - r < minZ) minZ = p.z - r;
+      if (p.z + r > maxZ) maxZ = p.z + r;
+    }
+    if (!Number.isFinite(minY)) return;
+    const floorY = minY - 0.035 * frameRadius;
+    const cx = (minX + maxX) / 2; const cz = (minZ + maxZ) / 2;
+    const size = Math.max(maxX - minX, maxZ - minZ, 1) * 1.9 + frameRadius * 0.6;
+
+    // soft footprint (ambient occlusion look): painted once per structure change on a small canvas
+    const N = 192;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = N;
+    const g = canvas.getContext('2d');
+    const reach = Math.max(0.6, frameRadius * 0.9);
+    for (let i = 0; i < n; i++) {
+      if (!visible[i]) continue;
+      const p = atomPos[i];
+      const h = Math.max(0, p.y - radii[i] - minY);
+      const fall = Math.exp(-h / reach);
+      if (fall < 0.04) continue;
+      const rr = radii[i] * 2.1 * (N / size);
+      g.globalAlpha = Math.min(1, 0.26 * fall * (n > 300 ? 0.55 : 1));
+      g.drawImage(blobSprite, (0.5 + (p.x - cx) / size) * N - rr, (0.5 + (p.z - cz) / size) * N - rr, rr * 2, rr * 2);
+    }
+    g.globalAlpha = 1;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    const blobMat = new THREE.MeshBasicMaterial({
+      map: tex, color: theme.shadow, transparent: true, opacity: theme.dark ? 0.8 : 0.5,
+      depthWrite: false, fog: false, toneMapped: false,
+    });
+    blobMat.userData.isBlob = true;
+    const blob = new THREE.Mesh(new THREE.PlaneGeometry(size, size), blobMat);
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.set(cx, floorY + 0.002 * frameRadius, cz);
+    blob.renderOrder = -2;
+    blob.frustumCulled = false;
+    gFloor.add(blob);
+
+    if (shadowOn) {
+      const sMat = new THREE.ShadowMaterial({ color: theme.shadow, opacity: theme.dark ? 0.5 : 0.24, fog: false, depthWrite: false });
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(frameRadius * 7, frameRadius * 7), sMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.set(center.x, floorY + 0.004 * frameRadius, center.z);
+      ground.receiveShadow = true;
+      ground.renderOrder = -1;
+      ground.frustumCulled = false;
+      gFloor.add(ground);
+      const R = frameRadius;
+      keyLight.position.copy(center).addScaledVector(keyDir, R * 3.4);
+      keyLight.target.position.copy(center);
+      const sc = keyLight.shadow.camera;
+      sc.left = -R * 1.12; sc.right = R * 1.12; sc.top = R * 1.12; sc.bottom = -R * 1.12;
+      sc.near = R * 0.8; sc.far = R * 6.2;
+      sc.updateProjectionMatrix();
+      keyLight.shadow.normalBias = R * 0.012;
+      keyLight.castShadow = true;
+      if (renderer) renderer.shadowMap.needsUpdate = true;
+    }
+    keyLight.position.copy(center).addScaledVector(keyDir, frameRadius * 3.4);
+    keyLight.target.position.copy(center);
+  }
+
   // ---------- element labels ----------
   function labelRec(sym, kind, lum) {
     const key = `${sym}|${kind}`;
@@ -574,7 +867,7 @@ export function createViewer(stage, opts = {}) {
       if (!visible[i] || opacityOf(i) < 0.4) continue;
       const a = st.atoms[i];
       const rec = labelRec(a.el, kind, elemInfo(a.el).lum);
-      const rimT = clamp(px() * 2.2, 0.02, 0.25);
+      const rimT = clamp(px() * 1.7, 0.015, 0.2);
       const sprite = pxSprite(rec, { pos: atomPos[i], off: radii[i] + rimT + 0.01 * S });
       sprite.position.copy(atomPos[i]);
       sprite.renderOrder = 10;
@@ -583,6 +876,24 @@ export function createViewer(stage, opts = {}) {
   }
 
   // ---------- cell, planes, arrows ----------
+  // Constant-pixel-width lines (LineSegments2). `pts` is a flat list of Vector3 pairs. Dashed lengths are in Å.
+  function fatLines(pts, o) {
+    const arr = new Float32Array(pts.length * 3);
+    for (let i = 0; i < pts.length; i++) { arr[i * 3] = pts[i].x; arr[i * 3 + 1] = pts[i].y; arr[i * 3 + 2] = pts[i].z; }
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(arr);
+    const mat = new LineMaterial({
+      color: new THREE.Color(o.color), linewidth: o.width || 1.3, transparent: o.opacity != null && o.opacity < 1,
+      opacity: o.opacity != null ? o.opacity : 1, depthWrite: false, depthTest: o.depthTest !== false,
+      dashed: !!o.dashed, dashSize: o.dash || 0.1, gapSize: o.gap || 0.08, toneMapped: false, fog: false,
+    });
+    const ls = new LineSegments2(geo, mat);
+    if (o.dashed) ls.computeLineDistances();
+    ls.frustumCulled = false;
+    return ls;
+  }
+
+
   function drawCell() {
     emptyGroup(gCell);
     if (!cellSpec) { requestRender(); return; }
@@ -596,10 +907,7 @@ export function createViewer(stage, opts = {}) {
     // corner index = i*4 + j*2 + k; edges join corners that differ in one bit
     const pts = [];
     for (let m = 0; m < 8; m++) for (const bit of [1, 2, 4]) if (!(m & bit)) { pts.push(P[m], P[m | bit]); }
-    const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    const mat = new THREE.LineBasicMaterial({ color: theme.ink2, transparent: true, opacity: theme.dark ? 0.85 : 0.8, depthWrite: false });
-    const lines = new THREE.LineSegments(geo, mat);
-    lines.frustumCulled = false;
+    const lines = fatLines(pts, { color: theme.ink2, width: 1.3, opacity: theme.dark ? 0.8 : 0.72 });
     lines.renderOrder = 3;
     gCell.add(lines);
     requestRender();
@@ -640,15 +948,20 @@ export function createViewer(stage, opts = {}) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setIndex(idx);
-      const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false });
+      // glassy translucent sheet with a clear bright edge
+      const mat = new THREE.MeshPhysicalMaterial({
+        color: col, roughness: 0.06, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04,
+        envMap: env, envMapIntensity: envIntensity * 1.3, transparent: true, opacity: theme.dark ? 0.3 : 0.26,
+        side: THREE.DoubleSide, depthWrite: false, fog: false,
+      });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.renderOrder = 4;
       mesh.frustumCulled = false;
       gPlanes.add(mesh);
-      const lg = new THREE.BufferGeometry().setFromPoints(P);
-      const loop = new THREE.LineLoop(lg, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.9, depthWrite: false }));
+      const seg = [];
+      for (let i = 0; i < m; i++) seg.push(P[i], P[(i + 1) % m]);
+      const loop = fatLines(seg, { color: col, width: 2.2, opacity: 0.95 });
       loop.renderOrder = 5;
-      loop.frustumCulled = false;
       gPlanes.add(loop);
       if (spec.label) {
         const rec = createLabelRec(String(spec.label), 'quiet', themeRef, { px: 12, color: col, depthTest: false });
@@ -677,7 +990,10 @@ export function createViewer(stage, opts = {}) {
       const headLen = Math.min(px() * 17, L * 0.45);
       const headR = px() * 6.5;
       const shaftR = px() * 2.1;
-      const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false });
+      const mat = new THREE.MeshStandardMaterial({
+        color: col, roughness: 0.34, metalness: 0.05, envMap: env, envMapIntensity: envIntensity * 0.9,
+        depthTest: false, depthWrite: false, fog: false,
+      });
       const shaft = new THREE.Mesh(arrowShaftGeo, mat);
       shaft.userData.sharedGeometry = true;
       const shaftLen = L - headLen;
@@ -707,33 +1023,54 @@ export function createViewer(stage, opts = {}) {
 
   // ---------- halos (highlight and measure marks) ----------
   const haloGroups = { hl: new THREE.Group(), ms: new THREE.Group() };
+  const ringTex = makeGlowTexture('ring');
+  const glowTex = makeGlowTexture('soft');
   gHalo.add(haloGroups.hl, haloGroups.ms);
+
+  function clearHaloGroup(g) {
+    if (g.userData.mats) { g.userData.mats.forEach((m) => m.dispose()); g.userData.mats = null; }
+    emptyGroup(g);
+  }
+  // Camera-facing soft ring that sits just in front of its atom (so the atom's own sphere cannot hide it).
+  function haloSprite(mat, pos, size, push) {
+    const sp = new THREE.Sprite(mat);
+    sp.userData.sharedMaterial = true;
+    sp.frustumCulled = false;
+    sp.scale.set(size, size, 1);
+    sp.position.copy(pos);
+    sp.onBeforeRender = (rend, scn, cam) => {
+      haloV.copy(cam.position).sub(pos);
+      const l = haloV.length() || 1;
+      haloV.multiplyScalar(push / l).add(pos);
+      if (!sp.position.equals(haloV)) { sp.position.copy(haloV); sp.updateMatrixWorld(true); }
+    };
+    return sp;
+  }
+  const haloV = new THREE.Vector3();
 
   function drawHalo(owner, indices, color) {
     const g = haloGroups[owner];
-    emptyGroup(g);
+    clearHaloGroup(g);
     if (!indices.length || !state.structure) return;
     const list = indices.filter((i) => i >= 0 && i < atomPos.length && visible[i]);
     if (!list.length) return;
-    const t = clamp(px() * 4.5, 0.05, 0.6);
-    const shell = new THREE.InstancedMesh(haloGeo, new THREE.MeshBasicMaterial({
-      color, side: THREE.BackSide, transparent: true, opacity: owner === 'ms' ? 0.95 : 0.9, depthWrite: false,
-    }), list.length);
-    const fill = new THREE.InstancedMesh(haloGeo, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.14, depthWrite: false,
-    }), list.length);
-    for (const m of [shell, fill]) { m.userData.sharedGeometry = true; m.frustumCulled = false; m.renderOrder = 6; }
-    const extra = owner === 'ms' ? 0 : t * 0.0;
-    list.forEach((i, k) => {
-      const r = radii[i] + (owner === 'ms' ? t * 0.8 : t * 1.4) + extra;
-      const p = atomPos[i];
-      tmpM.makeScale(r, r, r).setPosition(p.x, p.y, p.z);
-      shell.setMatrixAt(k, tmpM);
-      fill.setMatrixAt(k, tmpM);
+    const ms_ = owner === 'ms';
+    const ringMat = new THREE.SpriteMaterial({
+      map: ringTex, color, transparent: true, opacity: ms_ ? 0.95 : 0.92, depthWrite: false, fog: false, toneMapped: false,
     });
-    shell.instanceMatrix.needsUpdate = true;
-    fill.instanceMatrix.needsUpdate = true;
-    g.add(shell, fill);
+    const glowMat = new THREE.SpriteMaterial({
+      map: glowTex, color, transparent: true, opacity: ms_ ? 0.14 : 0.3, depthWrite: false, fog: false, toneMapped: false,
+    });
+    g.userData.mats = [ringMat, glowMat];
+    const pad = clamp(px() * (ms_ ? 3 : 5), 0.04, 0.55);
+    for (const i of list) {
+      const r = radii[i] + pad;
+      const ring = haloSprite(ringMat, atomPos[i], 2 * r / 0.66 * 0.98, radii[i] * 1.02);
+      ring.renderOrder = 7;
+      const glow = haloSprite(glowMat, atomPos[i], 2 * r * 1.9, radii[i] * 1.0);
+      glow.renderOrder = 6;
+      g.add(glow, ring);
+    }
   }
   function drawHalos() {
     drawHalo('hl', hl.indices, hl.color || theme.hot);
@@ -766,7 +1103,7 @@ export function createViewer(stage, opts = {}) {
     const pitch = len / n;
     const dl = Math.min(dash, pitch * 0.62);
     const mesh = new THREE.InstancedMesh(dashGeo, new THREE.MeshBasicMaterial({
-      color: theme.accent, transparent: true, depthTest: false, depthWrite: false,
+      color: theme.accent, transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false,
     }), n);
     mesh.userData.sharedGeometry = true;
     mesh.frustumCulled = false;
@@ -825,7 +1162,7 @@ export function createViewer(stage, opts = {}) {
       const curve = new THREE.CatmullRomCurve3(pts);
       const tube = new THREE.Mesh(
         new THREE.TubeGeometry(curve, 32, Math.max(0.012, px() * 1.5), 6, false),
-        new THREE.MeshBasicMaterial({ color: theme.accent, transparent: true, depthTest: false, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ color: theme.accent, transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false }),
       );
       tube.renderOrder = 28;
       tube.frustumCulled = false;
@@ -1001,6 +1338,8 @@ export function createViewer(stage, opts = {}) {
     theme = readTheme();
     for (const m of rimMats) m.color.set(theme.rim);
     for (const m of bondMat) if (state.style !== 'sticks') m.color.set(theme.bond);
+    fog.color.set(theme.fog);
+    if (state.structure) { buildHbonds(); buildFloor(shadowsWanted && !!renderer && state.structure.atoms.length <= SHADOW_MAX_ATOMS); }
     for (const r of labelCache.values()) r.draw();
     drawCell(); drawPlanes(); drawArrows(); drawHalos(); drawMeasure();
     requestRender();
@@ -1013,11 +1352,16 @@ export function createViewer(stage, opts = {}) {
     disposed = true;
     disposers.splice(0).forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
     clearBuilt();
-    for (const g of [gCell, gPlanes, gArrows, gHalo, gMeasure]) emptyGroup(g);
-    for (const g of Object.values(haloGroups)) emptyGroup(g);
+    for (const g of Object.values(haloGroups)) clearHaloGroup(g);
+    for (const g of [gCell, gPlanes, gArrows, gHalo, gMeasure, gHb, gFloor]) emptyGroup(g);
+    ringTex.dispose(); glowTex.dispose();
+    stage.scene.fog = prevFog || null;
+    stage.scene.onBeforeRender = prevSceneBefore;
+    stageLights.forEach((l) => { l.visible = true; });
+    keyLight.shadow.dispose();
     labelCache.forEach((r) => r.dispose());
     labelCache.clear();
-    haloGeo.dispose(); dashGeo.dispose(); arrowShaftGeo.dispose(); arrowHeadGeo.dispose();
+    dashGeo.dispose(); arrowShaftGeo.dispose(); arrowHeadGeo.dispose();
     stage.scene.remove(group);
     atomPos = [];
   }

@@ -4,6 +4,7 @@
 
 import { createStage } from '../shared/scene.js';
 import { tabs } from '../shared/ui.js';
+import { setupSpaceLighting, configureSpaceRenderer } from './space.js';
 import launch from './mode-launch.js';
 import orbits from './mode-orbits.js';
 import transfer from './mode-transfer.js';
@@ -118,6 +119,8 @@ function switchMode(id) {
   document.title = `${mode.label} · Orbital Mechanics`;
   showPanel('a');
   stage = createStage(stageEl);
+  // Space look: ACES tone mapping, black clear, one strong sun and almost no ambient.
+  if (stage.renderer) { configureSpaceRenderer(stage); setupSpaceLighting(stage); }
   try {
     mode.mount({ stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow: () => narrowMq.matches });
   } catch (e) {
