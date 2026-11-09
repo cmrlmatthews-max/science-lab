@@ -522,3 +522,36 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* ===== Simple pattern (shared/simple.js) =====
+   .simple-q, .simple-q-text, .simple-q-sub        the one plain question of a mode
+   .simple-answer[data-kind=ok|warn|info]          one large plain answer
+   .simple-try, .simple-try-btn[data-done]         guided "Try this" steps
+   .simple-numbers, .simple-numbers-body           "Show numbers" switch + hidden detail
+   .simple-note                                    short plain note                       */
+.simple-q { display: flex; flex-direction: column; gap: 4px; }
+.simple-q-text { margin: 0; font-size: 17px; line-height: 1.25; font-weight: 600; color: var(--ink); letter-spacing: 0; text-transform: none; }
+.simple-q-sub { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
+.simple-answer { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--paper-3); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.simple-answer[data-kind="ok"] { border-left-color: var(--ok); }
+.simple-answer[data-kind="warn"] { border-left-color: var(--warn); }
+.simple-answer-title { font-size: 20px; line-height: 1.2; font-weight: 600; color: var(--ink); }
+.simple-answer[data-kind="ok"] .simple-answer-title { color: var(--ok); }
+.simple-answer[data-kind="warn"] .simple-answer-title { color: var(--warn); }
+.simple-answer-text { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink); }
+.simple-try { display: flex; flex-direction: column; gap: 8px; }
+.simple-try-title { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.simple-try-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.simple-try-btn { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; cursor: pointer; }
+.simple-try-btn:hover { border-color: var(--line-strong); }
+.simple-try-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.simple-try-btn[data-done="true"] { background: var(--paper-3); }
+.simple-try-num { flex: 0 0 24px; height: 24px; border-radius: 50%; border: 1px solid var(--accent); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; font-family: var(--font-mono); }
+.simple-try-btn[data-done="true"] .simple-try-num { background: var(--accent); color: var(--accent-ink, #fff); }
+.simple-try-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.simple-try-label { font-size: 14px; font-weight: 500; }
+.simple-try-hint { font-size: 12px; color: var(--ink-2); }
+.simple-numbers { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.simple-numbers-body { display: flex; flex-direction: column; gap: 12px; }
+.simple-numbers-body[hidden] { display: none; }
+.simple-note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
