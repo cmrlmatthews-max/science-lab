@@ -1,7 +1,7 @@
 // Science Lab service worker. Relative URLs only, so it works under a sub-path (GitHub Pages).
 // Bump CACHE when any file changes. If a mode worker adds files (assembly-*.js, bridge-*.js, water-*.js),
-// add them to FILES below (same for orbital/launch-*.js, orbits-*.js, transfer-*.js).
-const CACHE = 'science-lab-v5';
+// add them to FILES below (same for orbital/launch-*.js, orbits-*.js, transfer-*.js and molecules/molecules-*.js, crystals-*.js, compare-*.js).
+const CACHE = 'science-lab-v6';
 const FILES = [
   './',
   './index.html',
@@ -40,6 +40,19 @@ const FILES = [
   './orbital/launch-model.js',
   './orbital/mode-orbits.js',
   './orbital/mode-transfer.js',
+  './molecules/',
+  './molecules/index.html',
+  './molecules/main.js',
+  './molecules/viewer.js',
+  './molecules/elements.js',
+  './molecules/chem.js',
+  './molecules/molecule-data.js',
+  './molecules/lattice.js',
+  './molecules/crystal-data.js',
+  './molecules/compare-data.js',
+  './molecules/mode-molecules.js',
+  './molecules/mode-crystals.js',
+  './molecules/mode-compare.js',
 ];
 
 self.addEventListener('install', (event) => {

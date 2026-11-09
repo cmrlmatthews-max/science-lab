@@ -234,7 +234,6 @@ function pxSprite(rec, follow) {
  * @param {{style?:string}} [opts]
  */
 export function createViewer(stage, opts = {}) {
-  const THREE_ = THREE;
   const camera = stage.camera;
   camera.fov = FOV;
   camera.updateProjectionMatrix();
@@ -447,9 +446,9 @@ export function createViewer(stage, opts = {}) {
         return 1;
       }
     }
-    const ref = Math.abs(tmpD.y) < 0.9 ? Y : tmpE.set(1, 0, 0);
-    out.crossVectors(tmpD, ref).normalize();
-    if (out.x + out.y * 1.1 + out.z * 1.3 < 0) out.negate();   // same sign for both directions of a collinear bond
+    // No neighbor defines a plane (linear molecule, lone bond): offset along world up so the lines show from the default view.
+    if (Math.abs(tmpD.y) < 0.9) out.copy(Y).addScaledVector(tmpD, -tmpD.y).normalize();
+    else out.set(1, 0, 0).addScaledVector(tmpD, -tmpD.x).normalize();
     return 0;
   }
 
@@ -459,6 +458,7 @@ export function createViewer(stage, opts = {}) {
     const sticks = style === 'sticks';
     const k = bondK();
     const rs = sticks ? 1.3 : 1;
+    const rimT = clamp(px() * 2.2, 0.02, 0.25);
     const nb = bonds.length;
     cylGeo = new THREE.CylinderGeometry(1, 1, 1, nb > 1500 ? 8 : 12, 1, false);
     // pass 1: count cylinders per opacity group
@@ -484,7 +484,17 @@ export function createViewer(stage, opts = {}) {
       mesh.userData.sharedGeometry = true;
       mesh.frustumCulled = false;
       if (op < 1) mesh.renderOrder = 1;
-      meshes.set(op, { mesh, i: 0 });
+      let rim = null;
+      if (sticks) {
+        // sticks carry all the color, so they get the same inverted-hull rim as atoms (dark carbon on the dark stage)
+        const rm = new THREE.MeshBasicMaterial({ color: theme.rim, side: THREE.BackSide, transparent: op < 1, opacity: op, depthWrite: op >= 1 });
+        rimMats.push(rm);
+        rim = new THREE.InstancedMesh(cylGeo, rm, c);
+        rim.userData.sharedGeometry = true;
+        rim.frustumCulled = false;
+        gRims.add(rim);
+      }
+      meshes.set(op, { mesh, rim, i: 0 });
       gBonds.add(mesh);
     }
     const off = new THREE.Vector3();
@@ -495,6 +505,10 @@ export function createViewer(stage, opts = {}) {
       tmpQ.setFromUnitVectors(Y, tmpD.set(dx / len, dy / len, dz / len));
       tmpM.compose(tmpP.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2), tmpQ, tmpS.set(rad, len, rad));
       rec.mesh.setMatrixAt(rec.i, tmpM);
+      if (rec.rim) {
+        tmpM.compose(tmpP, tmpQ, tmpS.set(rad + rimT, len, rad + rimT));
+        rec.rim.setMatrixAt(rec.i, tmpM);
+      }
       if (col) rec.mesh.setColorAt(rec.i, col);
       rec.i++;
     };
@@ -535,6 +549,7 @@ export function createViewer(stage, opts = {}) {
     }
     for (const rec of meshes.values()) {
       rec.mesh.count = rec.i;
+      if (rec.rim) { rec.rim.count = rec.i; rec.rim.instanceMatrix.needsUpdate = true; }
       rec.mesh.instanceMatrix.needsUpdate = true;
       if (rec.mesh.instanceColor) rec.mesh.instanceColor.needsUpdate = true;
     }
@@ -669,14 +684,14 @@ export function createViewer(stage, opts = {}) {
       shaft.scale.set(shaftR, shaftLen, shaftR);
       shaft.position.copy(from).addScaledVector(dir, shaftLen / 2);
       shaft.quaternion.setFromUnitVectors(Y, dir);
-      shaft.renderOrder = 25;
+      shaft.renderOrder = 8;
       const head = new THREE.Mesh(arrowHeadGeo, mat);
       head.userData.sharedGeometry = true;
       head.userData.sharedMaterial = true;
       head.scale.set(headR, headLen, headR);
       head.position.copy(from).addScaledVector(dir, shaftLen + headLen / 2);
       head.quaternion.setFromUnitVectors(Y, dir);
-      head.renderOrder = 25;
+      head.renderOrder = 8;
       gArrows.add(shaft, head);
       if (spec.label) {
         const rec = createLabelRec(String(spec.label), 'quiet', themeRef, { px: 12, color: col, depthTest: false });
@@ -705,7 +720,7 @@ export function createViewer(stage, opts = {}) {
       color, side: THREE.BackSide, transparent: true, opacity: owner === 'ms' ? 0.95 : 0.9, depthWrite: false,
     }), list.length);
     const fill = new THREE.InstancedMesh(haloGeo, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.2, depthWrite: false,
+      color, transparent: true, opacity: 0.14, depthWrite: false,
     }), list.length);
     for (const m of [shell, fill]) { m.userData.sharedGeometry = true; m.frustumCulled = false; m.renderOrder = 6; }
     const extra = owner === 'ms' ? 0 : t * 0.0;
@@ -864,6 +879,7 @@ export function createViewer(stage, opts = {}) {
     const same = structure === state.structure;
     state.structure = structure || null;
     state.opts = { ...o };
+    if (o.style && STYLE_OPTIONS.some((x) => x.value === o.style)) state.style = o.style;
     const atoms = structure && structure.atoms ? structure.atoms : [];
     atomPos = atoms.map((a) => new THREE.Vector3(a.pos[0], a.pos[1], a.pos[2]));
     computeBounds();
@@ -877,8 +893,15 @@ export function createViewer(stage, opts = {}) {
   function setStyle(style) {
     if (!STYLE_OPTIONS.some((s) => s.value === style) || style === state.style) return;
     state.style = style;
-    if (state.structure) rebuild();
-    else requestRender();
+    if (!state.structure) { requestRender(); return; }
+    // Atom sizes differ a lot between styles, so refit the distance (keeping the viewing direction).
+    const before = frameRadius;
+    computeBounds();
+    rebuild();
+    if (stage.supported && stage.controls && Math.abs(frameRadius - before) / before > 0.06) {
+      const dir = camera.position.clone().sub(stage.controls.target);
+      if (dir.length() > 1e-6) frame({ dir: dir.toArray() });
+    }
   }
 
   function setFade(fade) {
@@ -999,7 +1022,7 @@ export function createViewer(stage, opts = {}) {
     atomPos = [];
   }
 
-  return {
+  const api = {
     group,
     setStructure,
     setStyle,
@@ -1029,6 +1052,10 @@ export function createViewer(stage, opts = {}) {
       return { atoms: atomPos.length, atomsDrawn, bondInstances: bondInst, meshes: atomMeshes.length + gBonds.children.length, S, frameRadius, labels: gLabels.children.length };
     },
   };
+  // Debug hook for tests: the most recently created live viewer.
+  window.__molViewer = api;
+  disposers.push(() => { if (window.__molViewer === api) window.__molViewer = null; });
+  return api;
 }
 
 // ---------- controls ----------

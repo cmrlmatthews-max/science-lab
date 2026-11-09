@@ -1,7 +1,7 @@
 # Science Lab
 
 Science Lab is a set of 3D simulators for building science and general science.
-Stage 1 is **Envelope Lab**: a wall simulator with three modes. Stage 2 is **Orbital Mechanics** (see below).
+Stage 1 is **Envelope Lab**: a wall simulator with three modes. Stage 2 is **Orbital Mechanics** and Stage 3 is **Molecules and Crystals** (see below).
 
 | Mode | What you do |
 |---|---|
@@ -31,6 +31,35 @@ orbital/
   mode-*.js             the three modes
 ```
 
+## Stage 3: Molecules and Crystals
+
+Molecules and Crystals is an explorer, not a simulator. You turn, cut, measure, and compare real structures. Open it from the hub at `molecules/`.
+
+| Mode | What you do |
+|---|---|
+| Molecules | Pick a molecule (air, fuels, indoor air, refrigerants, building plastics). See its shape, bonds, and polarity. |
+| Crystals | Pick a crystal (metals, salts, diamond, ice, quartz, calcite). Build a block, show the cell and planes, count neighbors. |
+| Compare | Put two structures side by side, such as BCC and FCC iron or diamond and graphite, and see why they behave differently. |
+
+Units: lengths in ångström (1 Å = 0.1 nanometer), angles in degrees, density in g/cm³, molar mass in g/mol. Tap two atoms to measure a distance and tap a third for the angle.
+
+Every structure shows how far to trust it:
+
+- **Reference**: standard textbook lattice constants and bond lengths.
+- **Approximate**: reasonable values that are not checked against a source.
+- **Schematic**: a drawing that shows the idea, not measured positions (glass, liquid water, polymer chains).
+
+```
+molecules/
+  index.html, main.js   shell, store, mode switching
+  viewer.js             shared 3D atom and bond renderer, picking, measuring
+  elements.js, chem.js  element table and geometry helpers (tested)
+  molecule-data.js      molecule library
+  lattice.js, crystal-data.js   crystal math and crystal library (tested)
+  compare-data.js       comparison pairs (tested)
+  mode-*.js             the three modes
+```
+
 ## Run the app on your Mac
 
 The app must come from a web server. It does not open correctly from a double-click.
@@ -49,7 +78,7 @@ The app must come from a web server. It does not open correctly from a double-cl
 4. Open the page address on your iPhone in Safari.
 5. Tap Share, then Add to Home Screen.
 
-After each change to a file, increase the cache number in `sw.js` (`science-lab-v4` becomes `science-lab-v5`). The installed app then gets the new files.
+After each change to a file, increase the cache number in `sw.js` (`science-lab-v5` becomes `science-lab-v6`). The installed app then gets the new files.
 
 ## Run the tests
 
