@@ -6,8 +6,10 @@ import { MATERIALS } from './materials.js';
 import { WALLS, cloneWall } from './walls.js';
 import { analyzeWall, CLIMATE_PRESETS, conductionLoss, infiltrationLoss } from './physics.js';
 import { checkVaporRetarder, CLIMATE_ZONES } from './vapor.js';
-import { createWall3D, CONTROL_LEGEND } from './assembly-3d.js';
+import { createWall3D, CONTROL_LEGEND, CONTROL_COLORS } from './assembly-3d.js';
 import { createGraph } from './assembly-graph.js';
+import { createInfoCard, infoChip, infoButton } from './info-card.js';
+import { infoForMaterial } from './info-data.js';
 
 const CSS = `
 .asm-editor{display:flex;flex-direction:column;gap:12px;padding:12px;margin:-6px 0 6px 10px;background:var(--paper-2);border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius) var(--radius)}
@@ -24,6 +26,20 @@ const CSS = `
 .asm-show .seg-btn{font-size:12px;padding:0 2px}
 .asm-btns{display:flex;gap:8px;flex-wrap:wrap}
 .asm-btns .btn{flex:1 1 auto;padding:0 10px}
+.asm-stats{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.asm-sowhat{font-size:12px;line-height:1.35;color:var(--ink-2);margin-top:3px}
+.asm-fieldtag{display:inline-flex;align-items:center;gap:6px}
+.asm-togrow{display:flex;align-items:center;gap:8px}
+.asm-togrow .toggle{flex:1 1 auto;min-width:0}
+.asm-chips{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+.asm-fix{font-size:12.5px;line-height:1.4;color:var(--ink-2)}
+.asm-ctl{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.asm-ctl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;line-height:1.3}
+.asm-ctl-row .swatch{flex:none}
+.asm-ctl-row .asm-ctl-t{color:var(--ink-2);flex:1 1 120px;min-width:0}
+.asm-hint{position:absolute;z-index:5;top:8px;left:8px;right:8px;margin:0 auto;width:max-content;max-width:min(560px,calc(100% - 16px));display:flex;align-items:center;gap:8px;padding:5px 6px 5px 11px;background:var(--paper-2);border:1px solid var(--line-strong);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,0,0,.14);font:400 12.5px/1.35 var(--font-body);color:var(--ink-2)}
+.asm-hint button{flex:none;position:relative;width:24px;height:24px;border:1px solid var(--line-strong);border-radius:50%;background:var(--paper-3);color:var(--ink-2);padding:0;font-size:14px;line-height:1}
+.asm-hint button::after{content:"";position:absolute;inset:-10px}
 `;
 
 // Module-level view state so it survives a mode switch.
@@ -34,6 +50,35 @@ const ROLE = {
   structure: 'Structure', finish: 'Finish', cladding: 'Cladding', airspace: 'Air space',
 };
 const SHORT = (n) => n.split(',')[0];
+const HINT_KEY = 'envelopeLab.infoHintDismissed';
+const GLASS_R = 0.88; // single clear glass pane, BCI 7.40
+const BTU_PER_BULB = 341.2; // one 100 W bulb, Btu/h
+const inch = (v) => `${String(Math.round(v * 1000) / 1000)}"`;
+const infoIdFor = (materialId) => {
+  const m = infoForMaterial(materialId);
+  return m && typeof m === 'object' ? m.id : m;
+};
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+// Put an info control right after a field label (sliders, selects).
+function tagLabel(fieldEl, node) {
+  const lab = fieldEl.querySelector('.field-label');
+  if (!lab) return;
+  const wrap = el('span', { class: 'asm-fieldtag' });
+  lab.replaceWith(wrap);
+  wrap.append(lab, node);
+}
+// Put an info control and a one-line "so what" under a stat tile.
+function decorateStat(st, infoId, extra) {
+  const head = st.el.querySelector('.stat-head');
+  const lab = head.querySelector('.stat-label');
+  const wrap = el('span', { class: 'asm-fieldtag' });
+  lab.replaceWith(wrap);
+  wrap.append(lab, infoButton(infoId, { extra }));
+  const so = el('div', { class: 'asm-sowhat' });
+  st.el.appendChild(so);
+  return so;
+}
 const FRAME_DEPTH = { wood: { batt_r13: 3.5, batt_r19: 6, batt_r21: 5.5 }, steel: { batt_r13: 3.5, batt_r19: 6, batt_r21: 6 } };
 const BATT_R = { batt_r13: 13, batt_r19: 19, batt_r21: 21 };
 const EDIT_OPTIONS = Object.values(MATERIALS).filter((m) => m.category !== 'framing').map((m) => ({ value: m.id, label: m.name }));
@@ -47,7 +92,7 @@ export default {
   panelTitles: { a: 'Layers', b: 'Results', c: 'Climate' },
   _cleanup: [],
   mount(ctx) {
-    const { stage, panelA, panelB, panelC, summaryEl, store } = ctx;
+    const { stage, stageEl, panelA, panelB, panelC, summaryEl, store } = ctx;
     const cleanup = [];
     this._cleanup = cleanup;
 
@@ -58,6 +103,48 @@ export default {
     const wall3d = createWall3D(stage);
     cleanup.push(() => wall3d.dispose());
     let an = analyzeWall(store.get().wall, store.get().climate);
+    const stageWrap = stageEl.parentElement || stageEl;
+    const card = createInfoCard(stageWrap);
+    cleanup.push(() => card.dispose());
+
+    // live values shown at the top of a card
+    const layerExtra = (i) => {
+      const L = an.layers[i];
+      if (!L) return [];
+      return [
+        { label: 'R-value used here', value: fmt(L.r, 2) },
+        { label: 'Thickness', value: inch(L.thickness) },
+        { label: 'Inner face now', value: `${fmt(L.tIn, 1)} °F` },
+        { label: 'Outer face now', value: `${fmt(L.tOut, 1)} °F` },
+      ];
+    };
+    const dewExtra = () => {
+      const c = store.get().climate;
+      const inside = an.warmSide === 'interior';
+      return [
+        { label: 'Dew point now', value: `${fmt(an.dewPointF, 1)} °F` },
+        { label: inside ? 'Inside air' : 'Outside air', value: inside ? `${fmt(c.tIn, 0)} °F, ${fmt(c.rhIn, 0)}% RH` : `${fmt(c.tOut, 0)} °F, ${fmt(c.rhOut, 0)}% RH` },
+      ];
+    };
+    const condExtra = () => (an.condensation
+      ? [{ label: 'Surface now', value: `${fmt(an.condensation.tempF, 1)} °F` }, { label: 'Dew point now', value: `${fmt(an.dewPointF, 1)} °F` }]
+      : [{ label: 'Dew point now', value: `${fmt(an.dewPointF, 1)} °F` }]);
+    // 3D hit -> { id, extra } for the card
+    const cardFor = (hit) => {
+      if (!hit || !hit.kind) return null;
+      const L = hit.layerIndex != null ? an.layers[hit.layerIndex] : null;
+      if (hit.kind === 'layer') return L ? { id: infoIdFor(L.materialId), extra: layerExtra(hit.layerIndex) } : null;
+      if (hit.kind === 'stud') {
+        const fl = an.layers.find((l) => l.framing);
+        const type = (L && L.framing ? L.framing : fl && fl.framing)?.type;
+        return { id: type === 'steel' ? 'steel' : 'softwood', extra: [] };
+      }
+      if (hit.kind === 'dew_plane') return { id: 'dew_point', extra: dewExtra() };
+      if (hit.kind === 'condensation') return { id: 'condensation', extra: condExtra() };
+      if (hit.kind === 'callout' && hit.infoId) return { id: hit.infoId, extra: L && hit.infoId === infoIdFor(L.materialId) ? layerExtra(hit.layerIndex) : [] };
+      return hit.infoId ? { id: hit.infoId, extra: [] } : null;
+    };
+    let lastPtr = { x: 0, y: 0 };
 
     // ---------------------------------------------------------------- helpers
     const editWall = (fn) => {
@@ -209,6 +296,19 @@ export default {
           onSelect: () => select_(keep.sel === i ? null : i),
         });
         row.el.dataset.index = String(i);
+        const infoId = infoIdFor(layer.materialId);
+        const ib = infoButton(infoId, { extra: () => layerExtra(i), label: SHORT(mat.name) });
+        const rEl = row.el.querySelector('.layer-r');
+        row.el.insertBefore(ib, rEl);
+        row.el.addEventListener('pointerenter', (e) => {
+          if (e.pointerType && e.pointerType !== 'mouse') return;
+          if (wall3d.setHoverLayer) wall3d.setHoverLayer(i);
+          card.show(infoId, { anchor: row.el, extra: layerExtra(i) });
+        });
+        row.el.addEventListener('pointerleave', () => {
+          if (wall3d.setHoverLayer) wall3d.setHoverLayer(null);
+          card.hideHover();
+        });
         listEl.appendChild(row.el);
         if (keep.sel === i) listEl.appendChild(editorFor(i));
       });
@@ -221,17 +321,28 @@ export default {
     const sBig = stat({ label: 'Heat loss Q', value: 0, digits: 0, unit: 'Btu/h', source: 'Q = U × A × ΔT — ARE formula sheet, BCI 7.40' });
     const sDew = stat({ label: 'Dew point', value: 0, digits: 1, unit: '°F', source: 'Magnus formula. BCI 7.45' });
     const sFrame = stat({ label: 'Framing loss', value: 0, digits: 0, unit: '%' });
+    const soR = decorateStat(sR, 'r_value');
+    const soU = decorateStat(sU, 'u_factor');
+    const soQ = decorateStat(sQ, 'heat_flow');
+    const soBig = decorateStat(sBig, 'heat_loss_q');
+    const soDew = decorateStat(sDew, 'dew_point', dewExtra);
+    const soFrame = decorateStat(sFrame, 'framing_effect');
     const condBox = el('div', { class: 'section-body' });
+    const condFix = el('div', { class: 'asm-fix' });
+    const condChips = el('div', { class: 'asm-chips' }, infoChip('condensation', 'Why this matters', { extra: condExtra }));
     const vaporBox = el('div', { class: 'section-body' });
+    const vaporChips = el('div', { class: 'asm-chips' }, infoChip('vapor_retarder'), infoChip('vapor_classes', 'Vapor classes'), infoChip('climate_zone', 'Climate zone'));
     const leakBox = el('div', { class: 'section-body' });
+    const leakChips = el('div', { class: 'asm-chips' }, infoChip('air_leakage'));
     panelB.append(
-      section('Numbers', stats(sR.el, sU.el, sQ.el, sBig.el, sDew.el, sFrame.el)),
-      section('Condensation', condBox),
-      section('Vapor retarder', vaporBox),
-      section('Air leakage', leakBox),
+      section('Numbers', Object.assign(stats(sR.el, sU.el, sQ.el, sBig.el, sDew.el, sFrame.el), { className: 'stats asm-stats' })),
+      section('Condensation', condBox, condFix, condChips),
+      section('Vapor retarder', vaporBox, vaporChips),
+      section('Air leakage', leakBox, leakChips),
     );
 
     // ---------------------------------------------------------------- panel C
+    let labelsOn = store.get().labels !== false;
     const showSeg = segmented({
       label: 'Show',
       options: [{ value: 'materials', label: 'Materials' }, { value: 'temp', label: 'Temperature' }, { value: 'control', label: 'Control layers' }],
@@ -245,6 +356,9 @@ export default {
       onInput: (v) => { keep.explode = v; wall3d.setExplode(v); },
     });
     const secTg = toggle({ label: 'Section cut', value: keep.section, onChange: (v) => { keep.section = v; wall3d.setSection(v); } });
+    const lblTg = toggle({ label: 'Labels', value: labelsOn, onChange: (v) => { labelsOn = v; store.set({ labels: v }); if (wall3d.setCallouts) wall3d.setCallouts(v); } });
+    tagLabel(exSl.el, infoButton('exploded_view'));
+    const togRow = (tg, node) => el('div', { class: 'asm-togrow' }, tg.el, node);
     const resetView = button({ label: 'Reset view', onClick: () => wall3d.resetView() });
     const legendBox = el('div', { class: 'section-body' });
 
@@ -276,12 +390,16 @@ export default {
     });
     const graphBox = el('div', { class: 'asm-graph' });
     const graph = createGraph(graphBox);
+    tagLabel(slRhIn.el, infoButton('relative_humidity', { label: 'Inside humidity' }));
+    tagLabel(slLeak.el, infoButton('air_leakage'));
+    const graphSec = section('Temperature through the wall', graphBox, legendBox);
+    graphSec.querySelector('.section-title').insertBefore(infoButton('interior_surface_temp', { label: 'Temperature through the wall' }), null);
     cleanup.push(() => graph.dispose());
     panelC.append(
-      section('View', showSeg.el, exSl.el, secTg.el, el('div', { class: 'asm-btns' }, resetView)),
+      section('View', showSeg.el, exSl.el, togRow(secTg, infoButton('section_cut')), lblTg.el, el('div', { class: 'asm-btns' }, resetView)),
       section('Climate', presetSel.el, slTin.el, slRhIn.el, slTout.el, slRhOut.el),
       section('Air and area', slLeak.el, slArea.el),
-      section('Temperature through the wall', graphBox, legendBox),
+      graphSec,
     );
 
     function renderLegend() {
@@ -292,7 +410,17 @@ export default {
         const hi = Math.max(c.tIn, c.tOut);
         legendBox.append(thermalBar({ min: `${fmt(lo, 0)} °F`, mid: `${fmt((lo + hi) / 2, 0)} °F`, max: `${fmt(hi, 0)} °F` }));
       } else if (keep.show === 'control') {
-        legendBox.append(legend(CONTROL_LEGEND));
+        const lines = [
+          ['water', 'Keeps liquid water out', 'wrb_concept', 'Water control'],
+          ['air', 'Stops air moving through', 'air_barrier', 'Air barrier'],
+          ['vapor', 'Slows water vapor', 'vapor_retarder', 'Vapor retarder'],
+          ['thermal', 'Slows heat flow', 'continuous_insulation', 'Continuous insulation'],
+        ];
+        legendBox.append(el('div', { class: 'asm-ctl', style: 'margin-top:0' }, lines.map(([k, t, id, lab]) => el('div', { class: 'asm-ctl-row' },
+          el('span', { class: 'swatch', style: { background: CONTROL_COLORS[k] } }),
+          el('span', { class: 'asm-ctl-t', text: t }),
+          infoChip(id, lab)))));
+        legendBox.append(legend(CONTROL_LEGEND.filter((it) => ['Structure', 'Finish', 'Cladding'].includes(it.label))));
       } else {
         const seen = new Map();
         store.get().wall.layers.forEach((l) => seen.set(l.materialId, MATERIALS[l.materialId]));
@@ -314,6 +442,7 @@ export default {
       slTin.set(st.climate.tIn); slRhIn.set(st.climate.rhIn);
       slTout.set(st.climate.tOut); slRhOut.set(st.climate.rhOut);
       slLeak.set(st.leakCfm); slArea.set(st.areaSf);
+      lblTg.set(st.labels !== false);
 
       // stats
       const wood = st.wall.layers.find((l) => l.framing && l.framing.type === 'wood');
@@ -330,6 +459,16 @@ export default {
       sDew.update({ value: an.dewPointF, hint: an.warmSide === 'interior' ? 'Inside air' : 'Outside air' });
       const framedWall = !!(wood || steel);
       sFrame.el.style.display = framedWall ? '' : 'none';
+      // one plain "so what" line under each key number
+      const glassTimes = an.rTotal / GLASS_R;
+      soR.textContent = `Higher is better. This wall resists heat about ${glassTimes >= 10 ? Math.round(glassTimes) : fmt(glassTimes, 1)} times better than one pane of glass.`;
+      soU.textContent = 'Lower is better. It is 1 divided by R.';
+      soQ.textContent = 'The heat that crosses each square foot of wall every hour.';
+      const bulbs = Q / BTU_PER_BULB;
+      soBig.textContent = bulbs < 0.5 ? 'Less than the heat of one 100-watt light bulb for this wall area.'
+        : `About the heat of ${bulbs >= 10 ? Math.round(bulbs) : fmt(bulbs, 1).replace(/\.0$/, '')} 100-watt light bulbs for this wall area.`;
+      soDew.textContent = `Any surface colder than this gets wet when ${an.warmSide === 'interior' ? 'indoor' : 'outdoor'} air reaches it.`;
+      soFrame.textContent = 'The studs let heat go around the insulation.';
       if (framedWall) sFrame.update({ value: an.framingLossPct, hint: `Studs remove ${fmt(an.framingLossPct, 0)}% of the nominal R`, source: 'Nominal R vs effective R' });
 
       // condensation banner
@@ -339,10 +478,15 @@ export default {
         const nm = SHORT(MATERIALS[c.materialId].name);
         const face = an.season === 'winter' ? 'inner face' : 'outer face';
         condBox.append(banner({ kind: 'warn', title: 'Condensation risk', text: `${nm} ${face} is ${fmt(c.tempF, 1)} °F. Dew point is ${fmt(an.dewPointF, 1)} °F.` }));
+        condFix.textContent = an.season === 'winter'
+          ? 'Add insulation outside the sheathing, lower indoor humidity, or stop air leaks.'
+          : 'Keep humid outdoor air out: stop air leaks, add a vapor control layer outside the cold surface, or raise the indoor temperature.';
       } else if (c && c.outsideWrb) {
         condBox.append(banner({ kind: 'ok', title: 'No risk inside the wall', text: 'The dew point is outside the water barrier, in the drained zone.' }));
+        condFix.textContent = 'Water that forms out there can drain and dry. Keep the water barrier continuous.';
       } else {
         condBox.append(banner({ kind: 'ok', title: 'No condensation', text: 'No layer is below the dew point.' }));
+        condFix.textContent = 'Keep it this way: control indoor humidity and stop air leaks.';
       }
 
       // vapor banners
@@ -390,7 +534,46 @@ export default {
     });
     cleanup.push(unsub);
 
-    wall3d.onSelect((i) => select_(i));
+    // 3D hover (wide screens) and tap/click (pinned card). Both guard on part C's API.
+    const onPtr = (e) => { lastPtr = { x: e.clientX, y: e.clientY }; };
+    stageEl.addEventListener('pointermove', onPtr);
+    cleanup.push(() => stageEl.removeEventListener('pointermove', onPtr));
+    const onLeave = () => { card.hideHover(); if (wall3d.setHoverLayer) wall3d.setHoverLayer(null); };
+    stageEl.addEventListener('pointerleave', onLeave);
+    cleanup.push(() => stageEl.removeEventListener('pointerleave', onLeave));
+    if (wall3d.onHover) {
+      wall3d.onHover((h) => {
+        const m = cardFor(h);
+        if (!m || !m.id) {
+          card.hideHover();
+          if (wall3d.setHoverLayer) wall3d.setHoverLayer(null);
+          return;
+        }
+        if (wall3d.setHoverLayer) wall3d.setHoverLayer(h.kind === 'dew_plane' || h.kind === 'condensation' ? null : (h.layerIndex ?? null));
+        card.show(m.id, { x: h.clientX, y: h.clientY, extra: m.extra });
+      });
+    }
+    wall3d.onSelect((i, payload) => {
+      select_(i);
+      const h = payload && typeof payload === 'object' ? payload : (i != null ? { kind: 'layer', layerIndex: i } : null);
+      const m = cardFor(h);
+      if (!m || !m.id) { if (card.isPinned()) card.hide(); return; }
+      const x = h.clientX != null ? h.clientX : lastPtr.x;
+      const y = h.clientY != null ? h.clientY : lastPtr.y;
+      card.show(m.id, { pinned: true, x, y, extra: m.extra });
+    });
+    if (wall3d.setCallouts) wall3d.setCallouts(labelsOn);
+
+    // first-use hint over the stage
+    if (!lsGet(HINT_KEY)) {
+      const wide = window.matchMedia('(hover: hover) and (pointer: fine)').matches && window.innerWidth >= 900;
+      const x = el('button', { type: 'button', 'aria-label': 'Dismiss hint', text: '\u00d7' });
+      const hint = el('div', { class: 'asm-hint', role: 'note' },
+        el('span', { text: wide ? 'Hover over any part of the wall to learn what it does. Click to keep the card open.' : 'Tap any part of the wall to learn what it does.' }), x);
+      x.addEventListener('click', () => { lsSet(HINT_KEY, '1'); hint.remove(); });
+      stageWrap.appendChild(hint);
+      cleanup.push(() => hint.remove());
+    }
     wall3d.setShow(keep.show);
     wall3d.setExplode(keep.explode);
     wall3d.setSection(keep.section);

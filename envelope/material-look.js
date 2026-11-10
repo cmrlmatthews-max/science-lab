@@ -40,8 +40,10 @@ const ASSET_NAME = {
 // the photo covers this many inches on each side (tunable if a photo shows a different patch size)
 const ASSET_TILE = {
   brick: 43, cmu: 32, concrete: 48, osb: 20, plywood: 24, batt: 16, minwool: 12, xps: 24, eps: 12, polyiso: 24, gypsum: 24,
-  fibercement: 12, wood: 18, steel: 12, stucco: 12, wrb: 12,
+  fibercement: 12, wood: 12, steel: 12, stucco: 12, wrb: 12,
 };
+// photos whose real-world patch is taller than wide: lumber grain runs along the length, so the photo is stretched 3x that way
+const ASSET_TILE_H = { wood: 36 };
 const MIRROR = new Set(['wood', 'batt', 'concrete']);
 // multiply tint applied to a photo, so a shared photo still reads as the swatch of each id
 const ASSET_TINT = { gyp_063: '#e6dcc0', gyp_sheath: '#9fc392' };
@@ -53,7 +55,7 @@ const DEFS = {
   conc: { size: [512, 512], tile: [48, 48], rough: 0.92, metal: 0, bump: 1.2, env: 0.45, cut: '#7f8182', flat: '#7a7d80' },
   osb: { size: [1024, 1024], tile: [24, 24], rough: 0.86, metal: 0, bump: 1.2, env: 0.5, cut: '#b98443', flat: '#dba44f' },
   ply: { size: [512, 512], tile: [24, 24], rough: 0.72, metal: 0, bump: 0.6, env: 0.6, cut: '#b9864f', flat: '#a9672e' },
-  wood: { size: [512, 512], tile: [12, 12], rough: 0.74, metal: 0, bump: 0.8, env: 0.6, cut: '#d3a468', flat: '#9c6b3c' },
+  wood: { size: [512, 512], tile: [8, 24], rough: 0.74, metal: 0, bump: 0.8, env: 0.6, cut: '#d3a468', flat: '#9c6b3c' },
   woodend: { size: [512, 512], tile: [8, 8], rough: 0.85, metal: 0, bump: 0.9, env: 0.5, cut: '#d3a468', flat: '#c99a5e' },
   gyp: { size: [512, 512], tile: [24, 24], rough: 0.9, metal: 0, bump: 0.35, env: 0.5, cut: '#a8a59d', flat: '#e3dccb' },
   gyp63: { size: [512, 512], tile: [24, 24], rough: 0.9, metal: 0, bump: 0.35, env: 0.5, cut: '#a8a59d', flat: '#c9bb94' },
@@ -382,7 +384,7 @@ function genWood() {
     for (let x = 0; x < N; x += 1) {
       const i = y * N + x;
       const u = x / N;
-      let t = u * 52 + 1.5 * (warp[i] - 0.5) + 0.7 * (warp2[i] - 0.5);
+      let t = u * 26 + 1.1 * (warp[i] - 0.5) + 0.5 * (warp2[i] - 0.5);
       let kd = 99;
       for (let q = 0; q < 2; q += 1) {
         const kn = knots[q];
@@ -870,7 +872,7 @@ export function getLook(materialId, opts = {}) {
     usingAsset = !!photo;
     let color; let bump;
     if (photo) {
-      tileW = ASSET_TILE[assetName] || def.tile[0]; tileH = tileW;
+      tileW = ASSET_TILE[assetName] || def.tile[0]; tileH = ASSET_TILE_H[assetName] || tileW;
       color = st.color; bump = st.bump;
       color.repeat.set(1 / tileW, 1 / tileH); bump.repeat.set(1 / tileW, 1 / tileH);
     } else {
