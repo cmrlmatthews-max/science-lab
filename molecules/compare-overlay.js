@@ -123,7 +123,7 @@ export function createOverlay(stage) {
     live.labels = [];
     labels.forEach((l) => {
       const s = makeLabel(l.text);
-      const h = px() * 20;
+      const h = px() * 13;
       s.scale.set(h * s.userData.aspect, h, 1);
       s.position.set(l.pos[0], l.pos[1] - h * 1.5, l.pos[2]);
       s.userData.text = l.text;

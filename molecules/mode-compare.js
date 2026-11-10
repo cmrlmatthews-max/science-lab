@@ -118,6 +118,7 @@ export default {
       viewer.setStructure(structure, {
         style: store.get().view.style, radiusScale: pair.look.radiusScale, spaceRadius: pair.look.spaceRadius,
         colorBy: 'tag', tagColors, fade,
+        metalInCompounds: pair.id === 'iron' || pair.id === 'metals',
       });
       viewer.setCell(null);
 

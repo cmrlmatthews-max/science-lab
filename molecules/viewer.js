@@ -580,7 +580,9 @@ export function createViewer(stage, opts = {}) {
         rim.setMatrixAt(k, tmpM);
         if (byTag) {
           const tc = atoms[i].tag != null ? tagColors[atoms[i].tag] : null;
-          mesh.setColorAt(k, tmpC.set(tc || info.color));
+          // No tag color: a metal drawn as metal uses its display tint (steel gray iron), not the CPK swatch.
+          const metalHere = metalSet.has(g.el) && (!hasNonMetal || state.opts.metalInCompounds);
+          mesh.setColorAt(k, tmpC.set(tc || (metalHere && METAL_TINT[g.el]) || info.color));
         }
       }
       mesh.instanceMatrix.needsUpdate = true;
