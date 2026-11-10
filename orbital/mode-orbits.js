@@ -1,16 +1,25 @@
-// orbital/mode-orbits.js  Orbits mode of Orbital Mechanics ("simple first" version).
+// orbital/mode-orbits.js  Orbits mode of Orbital Mechanics, built on the five information layers.
 // One plain question: why do some satellites circle fast and others slow?
-// Main view: World, Orbit list, Height slider and Shape. Everything technical (lowest and highest point
-// sliders, stat tiles, compare table, speed graph, speed arrow switch, source tags) sits behind "Show numbers".
+//   Level 1 Start    the question, four big picture choices (Space Station, GPS, TV satellite, Moon), one plain answer.
+//   Level 2 Story    a five step guided story with an "In your life" line on every step.
+//   Level 3 Explore  orbit presets, lowest point and highest point controls, "Try this", playback.
+//   Level 4 Numbers  five stat tiles (US first, then metric) with an everyday comparison each.
+//   Level 5 Deep     other worlds, key numbers with sources, formulas, speed arrow, equal slices, compare table, speed graph.
+// Words and card entries live in content-orbits.js. Cards open on the world, the craft, the path, the lowest and highest
+// points and the speed arrow (hover on a fine pointer, tap on touch).
 //
-// State lives in ctx.store: bodyId, time {playing, warp}, orbits {pe, ap, presetId, showVelocity, showAreas, showNumbers}.
+// State lives in ctx.store: bodyId, level, time {playing, warp}, orbits {pe, ap, presetId, showVelocity, showAreas}.
 // pe and ap are altitudes above the surface in km. For the Sun the presets give distances from the center
 // (peR, apR); they are converted to altitudes here.
 // mode default export: { id, label, panelTitles, mount(ctx), unmount() }
 
 import { THREE } from '../shared/scene.js';
-import { el, fmt, select, slider, segmented, toggle, button, section, stats, stat, banner } from '../shared/ui.js';
-import { question, answer, tryThis, numbersSwitch } from '../shared/simple.js';
+import { el, fmt, select, slider, toggle, button, section, stats, stat, banner } from '../shared/ui.js';
+import { question, answer, tryThis } from '../shared/simple.js';
+import { story, tile, moreLink } from '../shared/layers.js';
+import { infoChip, infoButton } from '../shared/card.js';
+import { dual, friendlyDuration, nice } from '../shared/units.js';
+import { TEXT, getInfo } from './content-orbits.js';
 import { BODIES, BODY_ORDER, ORBIT_PRESETS } from './bodies.js';
 import { elementsFromApsides, positionAtTime, samplePath, formatDuration } from './physics.js';
 import {
@@ -26,7 +35,6 @@ const ARROW_MAX = 15;             // scene units, arrow length at the fastest sp
 const ARROW_MIN = 4;              // scene units, arrow length floor (slowest speed)
 const FRAME_EXTENT = 50;          // half width framed, scene units (the orbit spans 37 to 56 units)
 const ELEVATION = 66;             // camera elevation for this mode, degrees
-const SHAPE_E = { circle: 0, oval: 0.3, long: 0.7 }; // how oval each Shape choice is
 
 // Slider ranges, altitude above the surface in km.
 const RANGES = {
@@ -81,6 +89,17 @@ const STYLE = `
 .orb-graph .cv { stroke: var(--accent); stroke-width: 2; fill: none; stroke-linejoin: round; }
 .orb-graph .mk { fill: var(--hot); stroke: var(--paper-2); stroke-width: 2; }
 .orb-graph .mkl { stroke: var(--hot); stroke-width: 1; opacity: 0.5; }
+.orb-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.orb-choice { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 84px; padding: 10px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: 600 15px/1.25 var(--font-body); cursor: pointer; text-align: center; }
+.orb-choice:hover { border-color: var(--ink-2); }
+.orb-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.orb-choice[data-selected="true"] { background: var(--accent-soft); border-color: var(--accent-edge); box-shadow: inset 0 0 0 1px var(--accent-edge); color: var(--accent); }
+.orb-choice-ico { display: block; width: 40px; height: 40px; }
+.orb-choice-ico svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.orb-ideas { display: flex; flex-wrap: wrap; gap: 8px 8px; align-items: center; }
+.orb-row { display: flex; align-items: center; gap: 10px; }
+.orb-formula { color: var(--ink-2); font-size: 12.5px; }
+.orb-bar-labels { flex-wrap: wrap; }
 .orb-stage-note { position: absolute; left: 10px; bottom: 8px; font: 11px var(--font-body); color: rgba(255, 255, 255, 0.72); pointer-events: none; }
 `;
 
@@ -104,6 +123,21 @@ function presetAlts(body, p) {
 }
 
 const MILLION = 1e6;
+/** A height in both unit formats, miles first: { us: '249 mi', si: '400 km', text: '249 mi (400 km)' }. Millions stay short. */
+function altParts(km) {
+  if (km < MILLION) return dual.km(km, 0);
+  const us = `${nice(km / 1.609344 / MILLION)} million mi`;
+  const si = `${nice(km / MILLION)} million km`;
+  return { us, si, text: `${us} (${si})` };
+}
+
+// Simple line drawings for the four picture choices (stroke only, drawn in the text color).
+const ICONS = {
+  iss: '<svg viewBox="0 0 48 48"><rect x="19" y="19" width="10" height="10" rx="1.5"/><rect x="2" y="21" width="14" height="6"/><rect x="32" y="21" width="14" height="6"/><path d="M16 24h3M29 24h3M24 19v-9M24 29v9"/></svg>',
+  gps: '<svg viewBox="0 0 48 48"><g transform="rotate(-35 20 28)"><rect x="14" y="22" width="12" height="12" rx="1.5"/><rect x="0" y="25" width="11" height="6"/><rect x="29" y="25" width="11" height="6"/></g><path d="M32 36a10 10 0 0 0 10-10M30 43a17 17 0 0 0 15-17"/></svg>',
+  geo: '<svg viewBox="0 0 48 48"><path d="M8 14c0 14 10 24 24 24L8 14z"/><path d="M20 26l9-9"/><circle cx="31" cy="15" r="2.5"/><path d="M26 40v5M19 45h14"/></svg>',
+  moon: '<svg viewBox="0 0 48 48"><path d="M30 6a18 18 0 1 0 12 30A15 15 0 0 1 30 6z"/></svg>',
+};
 function kmText(x) { return x >= MILLION ? `${fmt(x / MILLION, 1)} million km` : `${fmt(x, 0)} km`; }
 function rangeText(pe, ap) {
   if (Math.round(pe) === Math.round(ap)) return kmText(pe);
@@ -135,19 +169,6 @@ function shortTrip(s) {
   if (d < 730) return `${d < 100 ? trimZero(fmt(d, 1)) : fmt(d, 0)} days`;
   return `${trimZero(fmt(d / 365.25, 1))} years`;
 }
-/** km/s to km/h, three significant figures, with thousands separators. */
-function kmh(v) {
-  const x = v * 3600;
-  const p = Math.pow(10, Math.max(0, Math.floor(Math.log10(x)) - 2));
-  return fmt(Math.round(x / p) * p, 0);
-}
-function speedText(e) {
-  return e.e < 0.02
-    ? `${kmh(e.vp)} km/h (${fmt(e.vp, 1)} km/s)`
-    : `${kmh(e.va)} to ${kmh(e.vp)} km/h (${fmt(e.va, 1)} to ${fmt(e.vp, 1)} km/s)`;
-}
-function shapeKind(e) { return e < 0.02 ? 'circle' : e < 0.5 ? 'oval' : 'long'; }
-
 function elementsFor(body, pe, ap) {
   return { ...elementsFromApsides(body.mu, body.radius + Math.min(pe, ap), body.radius + Math.max(pe, ap)), argPeri: 0 };
 }
@@ -300,7 +321,7 @@ export default {
   _cleanup: [],
 
   mount(ctx) {
-    const { panelA, panelB, panelC, summaryEl, stageEl, store, stage } = ctx;
+    const { panelA, panelB, panelC, summaryEl, stageEl, store, stage, layers } = ctx;
     const cleanup = this._cleanup;
 
     const styleEl = el('style', { id: 'orbits-style', text: STYLE });
@@ -312,6 +333,8 @@ export default {
     const getOrb = () => store.get().orbits;
     const setOrb = (patch) => store.set({ orbits: { ...store.get().orbits, ...patch } });
 
+    // Only level 5 offers other worlds: below that, always start on Earth.
+    if (!layers.is(5) && store.get().bodyId !== 'earth') { store.set({ bodyId: 'earth' }); setOrb({ pe: 400, ap: 400, presetId: 'iss' }); }
     // Repair stored state that does not fit the current body (for example after another mode changed the body).
     (function validate() {
       const body = getBody();
@@ -362,6 +385,10 @@ export default {
     let k = 1;
     let bucket = null;
     let wedges = []; // { mesh, mat, base }
+    let deep = layers.is(5);            // level 5 shows the speed arrow and the equal slices
+    let pathKm = [[1, 0], [0, 1]];     // the path as orbit-plane points, for picking
+    let lastR = null; let lastV = null; let lastS = null; // craft state now
+    let arrowLen = ARROW_MAX;
 
     function wedgeColors() {
       const th = spaceTheme();
@@ -397,7 +424,7 @@ export default {
         wedgeGroup.add(mesh);
         wedges.push({ mesh, mat, base });
       }
-      wedgeGroup.visible = !!getOrb().showAreas;
+      wedgeGroup.visible = !!getOrb().showAreas && deep;
     }
     function tintWedges() {
       const cols = wedgeColors();
@@ -426,6 +453,7 @@ export default {
       if (!forceFrame) clock.reset(frac * elements.period);
       if (bodyObj) { bodyObj.setScale(k); noteEl.style.display = bodyObj.exaggerated ? '' : 'none'; }
       pathObj.setPoints(samplePath(body.mu, elements, 240), k);
+      pathKm = samplePath(body.mu, elements, 120);
       const eccentric = elements.e > 0.02;
       axisObj.object.visible = eccentric;
       markerLo.object.visible = eccentric;
@@ -460,13 +488,15 @@ export default {
       const s = positionAtTime(body.mu, elements, t);
       craft.setPosition(s.r, k);
       if (craft.setHeading && s.v) craft.setHeading(s.v);
+      lastR = s.r; lastV = s.v; lastS = s;
       const o = getOrb();
-      if (o.showVelocity) {
+      if (o.showVelocity && deep) {
         const rel = elements.vp > elements.va ? (s.speed - elements.va) / (elements.vp - elements.va) : 1;
         const len = elements.vp > elements.va ? ARROW_MIN + (ARROW_MAX - ARROW_MIN) * rel : ARROW_MAX;
+        arrowLen = len;
         arrow.set(s.r, s.v, k, len);
       } else arrow.setVisible(false);
-      if (o.showAreas && wedges.length) {
+      if (o.showAreas && deep && wedges.length) {
         const cur = Math.min(SLICES - 1, Math.floor((t / T) * SLICES));
         wedges.forEach((w, i) => { const v = i === cur ? 0.42 : w.base; if (w.mat.opacity !== v) w.mat.opacity = v; });
       }
@@ -480,22 +510,22 @@ export default {
     }
 
     // ================= PANEL A =================
+    // Level 1: question, four picture choices, one answer. Level 2: the story. Level 3: presets and the two point controls.
     const bodySel = select({
-      label: 'World',
+      label: TEXT.l5.world,
       options: BODY_ORDER.map((id) => ({ value: id, label: BODIES[id].name })),
       value: store.get().bodyId,
       onChange: (id) => changeBody(id),
     });
 
-    const presetList = el('div', { class: 'orb-list', role: 'radiogroup', 'aria-label': 'Orbits' });
+    const presetList = el('div', { class: 'orb-list', role: 'radiogroup', 'aria-label': TEXT.l3.controls.orbits });
 
-    const heightFormat = (km) => (km >= MILLION ? `${fmt(km / MILLION, 1)} million` : fmt(km, 0));
-    /** Slider on a log scale of altitude in km. */
+    /** Slider on a log scale of altitude in km. The value shows miles first, then kilometers. */
     function altSlider(label, onKm) {
       let override = null;
       const ctl = slider({
-        label, min: 0, max: 1000, step: 1, value: 0, unit: 'km',
-        format: (pos) => heightFormat(override != null ? override : round3(posToKm(pos, RANGES[getBody().id]))),
+        label, min: 0, max: 1000, step: 1, value: 0,
+        format: (pos) => altParts(override != null ? override : round3(posToKm(pos, RANGES[getBody().id]))).text,
         onInput: (pos) => onKm(round3(posToKm(pos, RANGES[getBody().id]))),
       });
       return {
@@ -504,57 +534,88 @@ export default {
       };
     }
 
-    // The main slider: height of the lowest point. The highest point moves with it and keeps the same shape.
-    const heightSlider = altSlider('Height', (km) => setHeight(km));
-    const shapeCtl = segmented({
-      label: 'Shape',
-      options: [{ value: 'circle', label: 'Circle' }, { value: 'oval', label: 'Oval' }, { value: 'long', label: 'Long oval' }],
-      value: 'circle',
-      onChange: (v) => setShape(v),
-    });
-
-    // Detail controls (inside Show numbers): lowest and highest point.
-    const peSlider = altSlider('Lowest point (altitude)', (km) => {
+    const peSlider = altSlider(TEXT.l3.controls.lowest, (km) => {
       const o = getOrb();
       userChange({ pe: km, ap: Math.max(o.ap, km) });
     });
-    const apSlider = altSlider('Highest point (altitude)', (km) => {
+    const apSlider = altSlider(TEXT.l3.controls.highest, (km) => {
       const o = getOrb();
       userChange({ ap: km, pe: Math.min(o.pe, km) });
     });
-    const circBtn = button({ label: 'Make circular', onClick: () => { const o = getOrb(); userChange({ ap: o.pe }); } });
+    const circBtn = button({ label: TEXT.l3.controls.round, onClick: () => { const o = getOrb(); userChange({ ap: o.pe }); } });
+
+    function presetName(b, p) { return b.id === 'earth' && !layers.is(5) && TEXT.l3.presetNames[p.id] ? TEXT.l3.presetNames[p.id] : p.name; }
 
     function renderPresetRows() {
       presetList.replaceChildren();
       const b = getBody();
       for (const p of ORBIT_PRESETS[b.id]) {
         const row = el('div', { class: 'layer-row', role: 'radio', tabindex: '0', 'data-preset': p.id, 'data-clickable': 'true' },
-          el('div', { class: 'layer-main' }, el('div', { class: 'layer-name', text: p.name }), el('div', { class: 'layer-sub', text: presetSub(b, p) })));
+          el('div', { class: 'layer-main' }, el('div', { class: 'layer-name', text: presetName(b, p) }), el('div', { class: 'layer-sub', text: presetSub(b, p) })));
         const pick = () => applyPreset(p);
         row.addEventListener('click', pick);
         row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
         presetList.appendChild(row);
       }
+      markSelected();
     }
 
-    const tryEl = tryThis([
-      { label: 'A low orbit', hint: 'Close in. Very fast.', run: () => goPreset('earth', 'iss', false) },
-      { label: 'A high orbit', hint: 'Far out. Slow. One trip takes a day.', run: () => goPreset('earth', 'geo', false) },
-      { label: 'A long oval', hint: 'It speeds up when it comes close.', run: () => goPreset('earth', 'molniya', false) },
-      { label: 'See the equal slices', hint: 'Each slice takes the same time.', run: () => goPreset('earth', 'molniya', true) },
-    ]);
+    // level 1: big picture choices
+    const choiceRow = el('div', { class: 'orb-choices', role: 'radiogroup', 'aria-label': TEXT.l1.pick });
+    for (const c of TEXT.l1.choices) {
+      const b = el('button', { type: 'button', class: 'orb-choice', role: 'radio', 'aria-checked': 'false', 'data-choice': c.id },
+        el('span', { class: 'orb-choice-ico', 'aria-hidden': 'true', html: ICONS[c.id] || '' }),
+        el('span', { class: 'orb-choice-label', text: c.label }));
+      b.addEventListener('click', () => goPreset('earth', c.id, false));
+      choiceRow.appendChild(b);
+    }
+
+    // "Try this": three steps at level 3, a fourth (equal slices) at level 5
+    const tries = [
+      { ...TEXT.l3.tries[0], run: () => goPreset('earth', 'iss', false) },
+      { ...TEXT.l3.tries[1], run: () => goPreset('earth', 'geo', false) },
+      { ...TEXT.l3.tries[2], run: () => goPreset('earth', 'molniya', false) },
+      { ...TEXT.l5.extraTry, run: () => goPreset('earth', 'molniya', true) },
+    ];
+    const tryEl = tryThis(tries);
+    layers.gate(tryEl.querySelectorAll('li')[3], 5, 5);
+
+    // the story (level 2)
+    const STORY_PRESETS = ['iss', 'gps', 'geo', 'molniya', 'moon'];
+    const storyBox = story(
+      TEXT.l2.steps.map((s, i) => ({ ...s, run: () => goPreset('earth', STORY_PRESETS[i], false) })),
+      { title: 'The story' },
+    );
+
+    // ideas: information chips beside the key ideas
+    const chip = (id, label, min) => layers.gate(infoChip(ctx.card, id, label), min, 5);
+    const ideas = el('div', { class: 'orb-ideas', role: 'group', 'aria-label': 'Ideas' },
+      chip('orbit', TEXT.l3.ideas.orbit, 1),
+      chip('gravity', TEXT.l3.ideas.gravity, 1),
+      chip('oval', TEXT.l3.ideas.oval, 2),
+      chip('period', TEXT.l3.ideas.period, 2),
+      chip('geostationary', TEXT.l3.ideas.geostationary, 2),
+      chip('lowest', TEXT.l3.ideas.lowest, 3),
+      chip('highest', TEXT.l3.ideas.highest, 3),
+      chip('kepler', TEXT.l5.kepler, 5));
+
+    const ans = answer({ kind: 'info', title: '', text: '' });
 
     panelA.append(el('div', { class: 'orb-stack' },
-      question('Why do some satellites circle fast and others slow?', 'Pick an orbit. Watch how its height changes its speed.'),
-      bodySel.el,
-      presetList,
-      el('div', { class: 'orb-stack', style: { gap: '12px' } }, heightSlider.el, shapeCtl.el),
-      tryEl,
+      question(TEXT.l1.question, TEXT.l1.sub),
+      layers.gate(choiceRow, 1, 1),
+      layers.gate(storyBox.el, 2, 2),
+      ans.el,
+      layers.gate(el('div', {}, moreLink(layers)), 1, 2),
+      layers.gate(bodySel.el, 5, 5),
+      layers.gate(presetList, 3, 5),
+      layers.gate(el('div', { class: 'orb-stack', style: { gap: '12px' } }, peSlider.el, apSlider.el, circBtn), 3, 5),
+      layers.gate(tryEl, 3, 5),
+      ideas,
     ));
 
-    // ================= PANEL B =================
-    const ans = answer({ kind: 'info', title: '', text: '' });
-    const atmoBanner = banner({ kind: 'warn', text: 'Too low. The air drags it down.' });
+    // ================= PANEL B (level 3 and up) =================
+    const atmoBanner = banner({ kind: 'warn', text: TEXT.l3.messages.air });
     atmoBanner.style.display = 'none';
 
     const liveEl = el('p', { class: 'orb-live' });
@@ -562,62 +623,69 @@ export default {
     const barTick = el('div', { class: 'orb-bar-tick' });
     const barLo = el('span', { class: 'mono' });
     const barHi = el('span', { class: 'mono' });
-    const speedBar = el('div', { class: 'orb-bar', 'data-numbers': 'false', role: 'img', 'aria-label': 'Current speed between the slowest and the fastest' },
+    const speedBar = el('div', { class: 'orb-bar', 'data-numbers': 'false', role: 'img', 'aria-label': TEXT.l3.messages.barLabel },
       el('div', { class: 'orb-bar-track' }, barFill, barTick),
-      el('div', { class: 'orb-bar-labels' }, el('span', {}, 'Slowest ', barLo), el('span', {}, 'Fastest ', barHi)));
+      el('div', { class: 'orb-bar-labels' }, el('span', {}, `${TEXT.l3.messages.slowest} `, barLo), el('span', {}, `${TEXT.l3.messages.fastest} `, barHi)));
 
     const tripVal = el('strong');
     const speedVal = el('strong');
     const facts = el('div', { class: 'orb-facts' },
-      el('p', { class: 'orb-fact' }, 'Trip time: ', tripVal),
-      el('p', { class: 'orb-fact' }, 'Speed: ', speedVal));
+      el('p', { class: 'orb-fact' }, `${TEXT.l3.messages.tripTime}: `, tripVal),
+      el('p', { class: 'orb-fact' }, `${TEXT.l3.messages.speed}: `, speedVal));
 
-    // Detail: tiles, notes, compare table, speed graph, speed arrow switch.
-    const sPeriod = stat({ label: 'Time for one orbit', value: 0, unit: 'min', source: "Kepler's third law", digits: 1 });
-    const sVLow = stat({ label: 'Speed at the lowest point', value: 0, unit: 'km/s', source: 'Vis-viva equation', digits: 2 });
-    const sVHigh = stat({ label: 'Speed at the highest point', value: 0, unit: 'km/s', source: 'Vis-viva equation', digits: 2 });
-    const sAvg = stat({ label: 'Average distance', value: 0, unit: 'km', source: 'Semi-major axis', digits: 0 });
-    const sShape = stat({ label: 'Shape', value: 0, unit: '', source: 'Eccentricity', digits: 2 });
-    const sAlt = stat({ label: 'Altitude now', value: 0, unit: 'km', digits: 0 });
-    const sSpeedNow = stat({ label: 'Speed now', value: 0, unit: 'km/s', digits: 2 });
+    // level 4: stat tiles, each with US first, then metric, and one comparison line
+    const T4 = TEXT.l4.tiles;
+    const tLow = tile({ label: T4.lowest.label, us: '', si: '', compare: '', infoId: 'lowest' });
+    const tHigh = tile({ label: T4.highest.label, us: '', si: '', compare: '', infoId: 'highest' });
+    const tSpeed = tile({ label: T4.speed.label, us: '', si: '', compare: '', infoId: 'speed' });
+    const tPeriod = tile({ label: T4.period.label, us: '', si: '', compare: '', infoId: 'period' });
+    const tShape = tile({ label: T4.shape.label, us: '', si: '', compare: '', infoId: 'oval' });
+    const tilesWrap = el('div', { class: 'sl-tiles' }, tLow.el, tHigh.el, tSpeed.el, tPeriod.el, tShape.el);
+    const glossEl = el('p', { class: 'orb-cap', text: `Period: ${TEXT.l4.glosses.period} Eccentricity: ${TEXT.l4.glosses.eccentricity}` });
+
+    // level 5: the detailed tiles, notes, formulas, compare table, speed graph, speed arrow switch
+    const L5 = TEXT.l5.labels;
+    const sPeriod = stat({ label: L5.period, value: 0, unit: 'min', source: TEXT.l5.sources.period, digits: 1 });
+    const sVLow = stat({ label: L5.vLow, value: 0, unit: 'km/s', source: TEXT.l5.sources.speed, digits: 2 });
+    const sVHigh = stat({ label: L5.vHigh, value: 0, unit: 'km/s', source: TEXT.l5.sources.speed, digits: 2 });
+    const sAvg = stat({ label: L5.avg, value: 0, unit: 'km', source: TEXT.l5.sources.avg, digits: 0 });
+    const sShape = stat({ label: L5.shape, value: 0, unit: '', source: TEXT.l5.sources.shape, digits: 2 });
+    const sAlt = stat({ label: L5.altNow, value: 0, unit: 'km', digits: 0 });
+    const sSpeedNow = stat({ label: L5.speedNow, value: 0, unit: 'km/s', digits: 2 });
 
     const note1 = el('p', { class: 'orb-note' });
     const note2 = el('p', { class: 'orb-note' });
     const note3 = el('p', { class: 'orb-note' });
-    const notes = el('div', {}, note1, note2, note3);
+    const formulaEls = TEXT.l5.formulas.map((f) => el('p', { class: 'orb-note orb-formula', text: f }));
+    const notes = el('div', {}, note1, note2, note3, ...formulaEls);
 
     const tableEl = el('div', { class: 'orb-table', role: 'radiogroup', 'aria-label': 'Compare preset orbits' });
 
-    const velToggle = toggle({ label: 'Show speed arrow', value: getOrb().showVelocity, onChange: (v) => { setOrb({ showVelocity: v }); update(0, true); stage.requestRender(); } });
+    const velToggle = toggle({ label: L5.arrow, value: getOrb().showVelocity, onChange: (v) => { setOrb({ showVelocity: v }); update(0, true); stage.requestRender(); } });
     const graph = createSpeedGraph();
 
-    const numbers = numbersSwitch(
-      {
-        value: !!getOrb().showNumbers,
-        onChange: (v) => { setOrb({ showNumbers: v }); speedBar.dataset.numbers = v ? 'true' : 'false'; },
-      },
-      section('Your orbit', peSlider.el, apSlider.el, circBtn),
-      section('Key numbers', stats(sPeriod.el, sVLow.el, sVHigh.el, sAvg.el, sShape.el)),
-      section('Right now', stats(sAlt.el, sSpeedNow.el)),
-      section('What this shows', notes),
-      section('Show on the 3D view', velToggle.el),
-      section('Compare orbits', tableEl),
-      section('Speed around the orbit', graph.el),
+    const deepBox = el('div', { class: 'orb-stack' },
+      section(TEXT.l5.sections.key, stats(sPeriod.el, sVLow.el, sVHigh.el, sAvg.el, sShape.el)),
+      section(TEXT.l5.sections.now, stats(sAlt.el, sSpeedNow.el)),
+      section(TEXT.l5.sections.shows, notes),
+      section(TEXT.l5.sections.show3d, el('div', { class: 'orb-row' }, velToggle.el, infoButton(ctx.card, 'arrow', { label: 'speed arrow' }))),
+      section(TEXT.l5.sections.compare, tableEl),
+      section(TEXT.l5.sections.graph, graph.el),
     );
-    speedBar.dataset.numbers = numbers.get() ? 'true' : 'false';
 
     panelB.append(el('div', { class: 'orb-stack' },
-      ans.el,
       atmoBanner,
-      el('div', { class: 'orb-stack', style: { gap: '10px' } }, liveEl, speedBar),
-      facts,
-      numbers.el,
+      layers.gate(el('div', { class: 'orb-stack', style: { gap: '10px' } }, liveEl, speedBar), 3, 5),
+      layers.gate(facts, 3, 3),
+      layers.gate(tilesWrap, 4, 5),
+      layers.gate(glossEl, 4, 4),
+      layers.gate(deepBox, 5, 5),
     ));
 
     function renderTable() {
       tableEl.replaceChildren();
       const b = getBody();
-      tableEl.appendChild(el('div', { class: 'orb-th', 'aria-hidden': 'true' }, el('span', { text: 'Orbit' }), el('span', { text: 'Height' }), el('span', { text: 'One orbit' }), el('span', { text: 'Speed (km/s)' })));
+      tableEl.appendChild(el('div', { class: 'orb-th', 'aria-hidden': 'true' }, el('span', { text: L5.tableOrbit }), el('span', { text: L5.tableHeight }), el('span', { text: L5.tableTrip }), el('span', { text: L5.tableSpeed })));
       for (const p of ORBIT_PRESETS[b.id]) {
         const a = presetAlts(b, p);
         const e = elementsFor(b, a.pe, a.ap);
@@ -634,7 +702,7 @@ export default {
       }
     }
 
-    // ================= PANEL C =================
+    // ================= PANEL C (level 3 and up) =================
     let tc = null;
     const tcHost = el('div', {});
     let warpWin = [];
@@ -644,7 +712,7 @@ export default {
         warps: warpWin,
         value: t.warp,
         playing: t.playing,
-        label: 'Playback speed',
+        label: TEXT.l3.controls.playback,
         onChange: ({ playing, warp }) => { store.set({ time: { playing, warp } }); stage.requestRender(); },
         onReset: () => { clock.reset(0); craft.clearTrail(); update(0, true); stage.requestRender(); },
       });
@@ -676,23 +744,26 @@ export default {
       }
     }
 
-    const areaCap = el('p', { class: 'orb-cap', text: 'Each slice takes the same time.' });
+    const areaCap = el('p', { class: 'orb-cap', text: L5.slicesCaption });
     const areaToggle = toggle({
-      label: 'Show equal slices', value: getOrb().showAreas,
+      label: L5.slices, value: getOrb().showAreas && layers.is(5),
       onChange: (v) => setAreas(v),
     });
     areaCap.style.display = getOrb().showAreas ? '' : 'none';
 
     panelC.append(el('div', { class: 'orb-stack' },
       section('Playback', tcHost),
-      section('Equal slices', areaToggle.el, areaCap),
+      layers.gate(section(TEXT.l5.sections.slices, el('div', { class: 'orb-row' }, areaToggle.el, infoButton(ctx.card, 'slices', { label: 'equal slices' })), areaCap), 5, 5),
     ));
 
     // ================= repaint =================
     function paintLive(s) {
       const alt = s.rMag - body.radius;
-      const up = alt >= MILLION ? `${fmt(alt / MILLION, 1)} million km` : `${fmt(alt, 0)} km`;
-      liveEl.textContent = `Right now: ${fmt(s.speed, 1)} km/s, ${up} ${body.id === 'sun' ? 'from the surface' : 'up'}.`;
+      const deepNums = layers.is(4);
+      const sp = dual.kmps(s.speed);
+      const al = altParts(alt);
+      const where = body.id === 'sun' ? 'from the surface' : TEXT.l3.messages.upText;
+      liveEl.textContent = `${TEXT.l3.messages.right}: ${deepNums ? sp.text : sp.us}, ${deepNums ? al.text : al.us} ${where}.`;
       sAlt.update(alt >= MILLION ? { value: alt / MILLION, unit: 'million km', digits: 1 } : { value: alt, unit: 'km', digits: 0 });
       sSpeedNow.update({ value: s.speed, digits: 2 });
       const span = elements.vp - elements.va;
@@ -701,28 +772,33 @@ export default {
       barFill.style.width = `${(u * 100).toFixed(1)}%`;
     }
 
-    function paintAnswer() {
+    /** Which words of the answer fit the orbit on screen. */
+    function answerKey() {
       const o = getOrb();
       const e = elements;
+      const earth = body.id === 'earth';
       if (e.e < 0.02) {
+        if (earth && ['iss', 'gps', 'geo', 'moon'].includes(o.presetId)) return o.presetId;
         const geo = body.id !== 'sun' && Math.abs(e.period - body.rotationHours * 3600) / (body.rotationHours * 3600) < 0.02;
-        ans.update({
-          kind: 'info',
-          title: 'A steady circle',
-          text: `It moves at the same speed all the way around. One trip takes ${tripText(e.period)}.${geo ? ` That is one day, so it stays over one spot on ${body.name}.` : ''}`,
-        });
-      } else if (o.showAreas) {
-        ans.update({
-          kind: 'info',
-          title: 'Equal slices, equal time',
-          text: 'Each slice takes the same time to cross. Close in it is short and wide, far out it is long and thin, but the area is the same.',
-        });
-      } else {
-        ans.update({
-          kind: 'info',
-          title: 'Fast when close, slow when far',
-          text: 'Gravity pulls it in and speeds it up. As it climbs away it slows down again.',
-        });
+        return geo ? 'geo' : 'round';
+      }
+      if (o.showAreas && layers.is(5)) return 'slices';
+      return earth && o.presetId === 'molniya' ? 'molniya' : 'oval';
+    }
+
+    function paintAnswer() {
+      const a = TEXT.l1.answers[answerKey()];
+      ans.update({ kind: 'info', title: a.title, text: a.text });
+    }
+
+    function markSelected() {
+      const o = getOrb();
+      for (const row of presetList.children) { row.dataset.selected = row.dataset.preset === o.presetId ? 'true' : 'false'; row.setAttribute('aria-checked', row.dataset.selected); }
+      for (const row of tableEl.querySelectorAll('.orb-tr')) { row.dataset.selected = row.dataset.preset === o.presetId ? 'true' : 'false'; row.setAttribute('aria-checked', row.dataset.selected); }
+      for (const b of choiceRow.children) {
+        const on = body.id === 'earth' && b.dataset.choice === o.presetId;
+        b.dataset.selected = on ? 'true' : 'false';
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
       }
     }
 
@@ -735,37 +811,51 @@ export default {
       sVHigh.update({ value: e.va, digits: 2 });
       sAvg.update(e.a >= MILLION ? { value: e.a / MILLION, unit: 'million km', digits: 1 } : { value: e.a, unit: 'km', digits: 0 });
       sShape.update({ value: e.e, unit: shapeWord(e.e), digits: 2 });
-      barLo.textContent = `${fmt(e.va, 2)} km/s`;
-      barHi.textContent = `${fmt(e.vp, 2)} km/s`;
+      speedBar.dataset.numbers = layers.is(4) ? 'true' : 'false';
+      barLo.textContent = layers.is(5) ? dual.kmps(e.va, 2).text : dual.kmps(e.va).us;
+      barHi.textContent = layers.is(5) ? dual.kmps(e.vp, 2).text : dual.kmps(e.vp).us;
       speedBar.hidden = e.e < 0.02;
 
-      note1.textContent = e.e < 0.01
-        ? 'The speed stays the same all the way around.'
-        : 'The craft moves fastest at the lowest point and slowest at the highest point.';
-      note2.textContent = 'A higher orbit is slower and takes longer.';
+      // level 4 tiles
+      const lo = altParts(o.pe);
+      const hi = altParts(o.ap);
+      tLow.update({ us: lo.us, si: lo.si, compare: T4.lowest.compare(o.pe) });
+      tHigh.update({ us: hi.us, si: hi.si, compare: T4.highest.compare(o.ap) });
+      const vp = dual.kmps(e.vp, 2);
+      const va = dual.kmps(e.va, 2);
+      if (e.e < 0.02) tSpeed.update({ us: vp.us, si: vp.si, compare: T4.speed.compare(e.vp) });
+      else tSpeed.update({
+        us: `${vp.us.replace(' mph', '')} to ${va.us}`,
+        si: `${vp.si.replace(' km/s', '')} to ${va.si}`,
+        compare: T4.speed.compare(e.vp),
+      });
+      tPeriod.update({ us: friendlyDuration(e.period), si: durText(e.period), compare: T4.period.compare(e.period) });
+      tShape.update({ us: shapeWord(e.e).replace(/^./, (c) => c.toUpperCase()), si: `eccentricity ${fmt(e.e, 2)}`, compare: T4.shape.compare(e.e) });
+
+      note1.textContent = e.e < 0.01 ? TEXT.l3.notes[2] : TEXT.l3.notes[0];
+      note2.textContent = TEXT.l3.notes[1];
       const geo = body.id === 'earth' && e.e < 0.01 && Math.abs(e.period - 86164) < 400;
-      note3.textContent = geo ? 'One orbit takes one Earth day, so the craft stays above the same place.' : '';
+      note3.textContent = geo ? TEXT.l3.notes[3] : '';
       note3.style.display = geo ? '' : 'none';
 
-      tripVal.textContent = tripText(e.period);
-      speedVal.textContent = speedText(e);
+      const sp = dual.kmps(e.vp);
+      tripVal.textContent = friendlyDuration(e.period);
+      speedVal.textContent = e.e < 0.02 ? sp.us : `${sp.us.replace(' mph', '')} to ${dual.kmps(e.va).us}`;
       paintAnswer();
 
-      summaryEl.textContent = `${body.name} · ${orbitWord(body, e, { pe: o.pe })} · ${shortTrip(e.period)} per trip`;
+      const pn = body.id === 'earth' && o.presetId && TEXT.l3.presetNames[o.presetId];
+      const what = pn || orbitWord(body, e, { pe: o.pe });
+      summaryEl.textContent = layers.is(3) ? `${body.name} · ${what} · ${shortTrip(e.period)} per trip` : `${body.name} · ${what}`;
 
       const atmo = body.atmosphere > 0 && o.pe < body.atmosphere;
       atmoBanner.style.display = atmo ? '' : 'none';
-      for (const row of presetList.children) row.dataset.selected = row.dataset.preset === o.presetId ? 'true' : 'false';
-      for (const row of presetList.children) row.setAttribute('aria-checked', row.dataset.selected);
-      for (const row of tableEl.querySelectorAll('.orb-tr')) { row.dataset.selected = row.dataset.preset === o.presetId ? 'true' : 'false'; row.setAttribute('aria-checked', row.dataset.selected); }
-      shapeCtl.set(shapeKind(e.e));
+      markSelected();
       graph.setData(body, elements);
     }
 
     // ================= actions =================
     function syncSliders() {
       const o = getOrb();
-      heightSlider.setKm(o.pe);
       peSlider.setKm(o.pe);
       apSlider.setKm(o.ap);
     }
@@ -781,36 +871,12 @@ export default {
       stage.requestRender();
     }
 
-    /** Height slider: move the lowest point and keep the same shape (how oval). */
-    function setHeight(km) {
-      const e = elements ? elements.e : 0;
-      const hi = RANGES[body.id][1];
-      const rp = body.radius + km;
-      const ra = e < 1e-6 ? rp : (rp * (1 + e)) / (1 - e);
-      userChange({ pe: km, ap: Math.max(km, Math.min(hi, ra - body.radius)) });
-    }
-
-    /** Shape control: keep the lowest point, raise the highest point to match the shape. */
-    function setShape(kind) {
-      const o = getOrb();
-      const e = SHAPE_E[kind];
-      if (e === 0) { userChange({ ap: o.pe }); return; }
-      const [lo, hi] = RANGES[body.id];
-      const R = body.radius;
-      let pe = o.pe;
-      let ap = ((R + pe) * (1 + e)) / (1 - e) - R;
-      if (ap > hi) { // too far for this world: lower the lowest point to keep the shape
-        ap = hi;
-        pe = Math.max(lo, round3(((R + hi) * (1 - e)) / (1 + e) - R));
-      }
-      userChange({ pe, ap });
-    }
-
     function setAreas(v) {
-      setOrb({ showAreas: !!v });
-      areaToggle.set(!!v);
-      wedgeGroup.visible = !!v;
-      areaCap.style.display = v ? '' : 'none';
+      const on = !!v && layers.is(5);
+      setOrb({ showAreas: on });
+      areaToggle.set(on);
+      wedgeGroup.visible = on;
+      areaCap.style.display = on ? '' : 'none';
       wedges.forEach((w) => { w.mat.opacity = w.base; });
       if (elements) { paintAnswer(); update(0, true); }
       stage.requestRender();
@@ -838,7 +904,7 @@ export default {
       afterBodyChange();
     }
 
-    /** "Try this" step: pick the world and the orbit, and set the equal slices switch. */
+    /** A choice, story step or "Try this" step: pick the world and the orbit, and set the equal slices switch. */
     function goPreset(bodyId, presetId, areas) {
       if (getBody().id !== bodyId) { bodySel.set(bodyId); changeBody(bodyId); }
       const p = ORBIT_PRESETS[bodyId].find((x) => x.id === presetId);
@@ -859,7 +925,115 @@ export default {
       stage.requestRender();
     }
 
+    // ================= layers =================
+    layers.gateFn((on) => { deep = on; wedgeGroup.visible = on && !!getOrb().showAreas; if (elements) update(0, true); stage.requestRender(); }, 5, 5);
+    layers.onChange((lv, prev) => {
+      // Only level 5 offers other worlds, the speed arrow and the equal slices. Going down returns to the Space Station.
+      if (lv < 5 && getBody().id !== 'earth') goPreset('earth', 'iss', false);
+      else if (lv < 5 && getOrb().showAreas) setAreas(false);
+      if (lv === 2 && prev !== 2) storyBox.go(0);
+      renderPresetRows();
+      if (elements) { paintResults(); update(0, true); }
+      stage.requestRender();
+    });
+    ctx.setPanelMin('b', 3);
+    ctx.setPanelMin('c', 3);
+
+    // ================= cards on the 3D view =================
+    const proj = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
+    const canvasEl = () => (stage.renderer && stage.renderer.domElement) || null;
+    function toScreen(v3, rect) {
+      proj.copy(v3).project(stage.camera);
+      if (proj.z > 1) return null;
+      return { x: rect.left + ((proj.x + 1) / 2) * rect.width, y: rect.top + ((1 - proj.y) / 2) * rect.height };
+    }
+    const kmToScene = (p) => tmp.set(p[0] / k, 0, -p[1] / k);
+    function distToSegment(px, py, a, b) {
+      const dx = b.x - a.x; const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 > 0 ? clamp(((px - a.x) * dx + (py - a.y) * dy) / len2, 0, 1) : 0;
+      return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+    }
+    /** Which thing is under the pointer: craft, markers, arrow, path, then the world itself. */
+    function hitTest(clientX, clientY) {
+      const cv = canvasEl();
+      if (!cv || !elements || !stage.camera) return null;
+      const rect = cv.getBoundingClientRect();
+      if (!rect.width) return null;
+      const reach = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 28 : 20;
+      const near = (v3, r) => { const s = toScreen(v3, rect); return s && Math.hypot(clientX - s.x, clientY - s.y) <= r; };
+      if (lastR && near(kmToScene(lastR), reach)) return craftInfoId();
+      if (elements.e > 0.02) {
+        if (near(kmToScene([elements.rp, 0]), reach - 4)) return 'lowest';
+        if (near(kmToScene([-elements.ra, 0]), reach - 4)) return 'highest';
+      }
+      if (deep && getOrb().showVelocity && arrow.object.visible && lastR && lastV) {
+        const a = toScreen(kmToScene(lastR), rect);
+        const dir = new THREE.Vector3(lastV[0], 0, -lastV[1]).normalize();
+        const tip = toScreen(kmToScene(lastR).add(dir.multiplyScalar(arrowLen)), rect);
+        if (a && tip && distToSegment(clientX, clientY, a, tip) <= 12) return 'arrow';
+      }
+      // the path: nearest drawn segment in screen space
+      let best = Infinity;
+      let prevS = null;
+      for (let i = 0; i <= pathKm.length; i++) {
+        const s = toScreen(kmToScene(pathKm[i % pathKm.length]).clone(), rect);
+        if (s && prevS) best = Math.min(best, distToSegment(clientX, clientY, prevS, s));
+        prevS = s;
+      }
+      if (best <= 9) return 'path';
+      if (bodyObj) {
+        const hit = stage.pick(clientX, clientY, [bodyObj.group]);
+        if (hit) return body.id;
+      }
+      return null;
+    }
+    /** The craft card names what the craft stands for in the preset orbits. */
+    function craftInfoId() {
+      const o = getOrb();
+      if (body.id === 'earth' && elements.e < 0.02) {
+        if (o.presetId === 'moon') return 'moon';
+        if (o.presetId === 'geo') return 'geostationary';
+        if (o.presetId === 'iss' || o.presetId === 'gps') return o.presetId;
+      }
+      if (body.id === 'earth' && o.presetId === 'molniya') return 'molniya';
+      return 'craft';
+    }
+    /** Live values at the top of a card (level 3 and up, so levels 1 and 2 stay free of digits). */
+    function cardExtra(id) {
+      if (!layers.is(3) || !elements) return [];
+      const nowS = lastS;
+      if ((id === 'craft' || id === 'iss' || id === 'gps' || id === 'molniya' || id === 'geostationary' || (id === 'moon' && body.id === 'earth')) && nowS) {
+        return [
+          { label: 'Speed now', value: dual.kmps(nowS.speed).us },
+          { label: 'Height now', value: altParts(nowS.rMag - body.radius).us },
+        ];
+      }
+      if (id === 'lowest') return [{ label: 'Height', value: altParts(getOrb().pe).us }, { label: 'Speed here', value: dual.kmps(elements.vp).us }];
+      if (id === 'highest') return [{ label: 'Height', value: altParts(getOrb().ap).us }, { label: 'Speed here', value: dual.kmps(elements.va).us }];
+      if (id === 'path') return [{ label: 'One trip', value: friendlyDuration(elements.period) }];
+      return [];
+    }
+    function cardAt(clientX, clientY, pinned) {
+      const id = hitTest(clientX, clientY);
+      if (!id) return false;
+      ctx.card.show(id, { x: clientX, y: clientY, pinned, extra: () => cardExtra(id) });
+      return true;
+    }
+    const onHover = (e) => {
+      if (e.pointerType === 'touch' || e.buttons) return;
+      if (!cardAt(e.clientX, e.clientY, false)) ctx.card.hideHover();
+    };
+    const onLeave = () => ctx.card.hideHover();
+    stageEl.addEventListener('pointermove', onHover);
+    stageEl.addEventListener('pointerleave', onLeave);
+    cleanup.push(() => { stageEl.removeEventListener('pointermove', onHover); stageEl.removeEventListener('pointerleave', onLeave); });
+    cleanup.push(stage.onTap(({ clientX, clientY }) => {
+      if (!cardAt(clientX, clientY, true) && ctx.card.isPinned()) ctx.card.hide();
+    }));
     // ----- start -----
+    ctx.card.setSource(getInfo);
     setBody();
     renderPresetRows();
     renderTable();

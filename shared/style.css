@@ -555,3 +555,127 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .simple-numbers-body { display: flex; flex-direction: column; gap: 12px; }
 .simple-numbers-body[hidden] { display: none; }
 .simple-note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+
+/* ===== Layers (shared/layers.js, shared/card.js) =====
+   Only the layered modules (Orbital Mechanics, Molecules and Crystals) use these; their shells add
+   class "sl-layers" to <body>, which makes the [hidden] attribute always win over author display rules.
+   .sl-bar .sl-btn .sl-less .sl-more .sl-mid .sl-steps .sl-step[aria-current] .sl-num .sl-name .sl-now .sl-live
+   .sl-story .sl-story-head .sl-story-title .sl-story-text .sl-story-life .sl-story-nav .sl-story-btn
+   .sl-tile .sl-tile-label .sl-tile-us .sl-tile-si .sl-tile-compare   .sl-tiles (auto-fit grid of tiles)
+   .sl-more-link
+   .shell.sl-no-b / .shell.sl-no-c   wide layout when panel B / C is hidden (set by setPanelMin)           */
+body.sl-layers [hidden] { display: none !important; }
+
+.sl-bar {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 8px;
+  background: var(--paper-3);
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.sl-btn {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 34px; padding: 0 10px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--paper-2); color: var(--ink);
+  font: 500 13px/1 var(--font-body); white-space: nowrap;
+}
+.sl-btn::after { content: ""; position: absolute; inset: -7px -3px; }
+.sl-btn:hover:not(:disabled) { border-color: var(--ink-2); }
+.sl-btn:active:not(:disabled) { background: var(--track); }
+.sl-btn:disabled { opacity: 0.35; cursor: default; }
+.sl-more { color: var(--accent); border-color: var(--accent-edge); }
+.sl-arrow { font-size: 17px; line-height: 1; transform: translateY(-1px); }
+.sl-mid { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.sl-now {
+  max-width: 100%; display: flex; gap: 6px; font-size: 12px; line-height: 15px; white-space: nowrap; overflow: hidden;
+}
+.sl-now-name { font-weight: 600; color: var(--ink); flex: none; }
+.sl-now-hint { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.sl-now-hint::before { content: "\00b7\00a0"; }
+.sl-steps { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; align-items: center; }
+.sl-steps li { display: flex; }
+.sl-step {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0; border: 0; background: transparent; color: var(--ink-2);
+  font: 500 13px/1 var(--font-body);
+}
+.sl-step::after { content: ""; position: absolute; inset: -10px -3px; }
+.sl-num {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: inline-grid; place-items: center;
+  border: 1px solid var(--line-strong); background: var(--paper-2); color: var(--ink-2);
+  font: 600 11.5px/1 var(--font-mono);
+}
+.sl-name { display: none; }
+.sl-step[data-state="past"] .sl-num { color: var(--ink); border-color: var(--ink-2); }
+.sl-step[aria-current="step"] .sl-num { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.sl-step:hover .sl-num { border-color: var(--ink-2); }
+.sl-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 430px) {
+  .sl-bar { gap: 6px; padding: 0 6px; }
+  .sl-btn { padding: 0 9px; }
+  .sl-arrow { display: none; }
+  .sl-now { font-size: 11.5px; }
+}
+
+@media (min-width: 900px) {
+  .sl-bar { display: flex; height: 44px; padding: 0 16px; gap: 14px; }
+  .sl-btn { height: 30px; }
+  .sl-mid { flex: 1 1 auto; flex-direction: row; align-items: center; gap: 16px; }
+  .sl-steps { order: 1; gap: 4px; }
+  .sl-now { order: 2; min-width: 0; font-size: 13px; line-height: 1.3; }
+  .sl-now-name { display: none; }
+  .sl-now-hint::before { content: none; }
+  .sl-step { height: 30px; padding: 0 10px 0 5px; border: 1px solid transparent; border-radius: var(--radius); }
+  .sl-step::after { inset: -6px -2px; }
+  .sl-name { display: inline; }
+  .sl-step:hover { color: var(--ink); background: var(--paper-2); border-color: var(--line); }
+  .sl-step[data-state="past"] { color: var(--ink); }
+  .sl-step[aria-current="step"] { background: var(--accent-soft); border-color: var(--accent-edge); color: var(--accent); }
+  .sl-num { width: 20px; height: 20px; font-size: 11px; }
+
+  /* A hidden panel gives its space to the 3D view. */
+  .shell.sl-no-c { grid-template-rows: minmax(0, 1fr); grid-template-areas: "a stage b"; }
+  .shell.sl-no-b { grid-template-columns: clamp(280px, 24vw, 340px) minmax(0, 1fr); grid-template-areas: "a stage" "c c"; }
+  .shell.sl-no-b.sl-no-c { grid-template-rows: minmax(0, 1fr); grid-template-areas: "a stage"; }
+  .shell.sl-no-b .stage-wrap { border-right: 0; }
+}
+
+/* Story */
+.sl-story { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-3); }
+.sl-story-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sl-story-kicker { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.sl-story-count { font: 500 12px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.sl-story-title { font-size: 17px; line-height: 1.25; font-weight: 600; color: var(--ink); }
+.sl-story-text { font-size: 14px; line-height: 1.45; color: var(--ink); }
+.sl-story-life { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--radius) var(--radius) 0; }
+.sl-story-life-h { font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.sl-story-life-text { font-size: 13.5px; line-height: 1.4; color: var(--ink); }
+.sl-story-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.sl-story-btn { min-width: 84px; min-height: 44px; }
+.sl-story-btn:disabled { opacity: 0.35; cursor: default; }
+.sl-story-dots { display: flex; gap: 5px; }
+.sl-story-dot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--line-strong); background: transparent; }
+.sl-story-dot[data-on="true"] { background: var(--accent); border-color: var(--accent); }
+
+/* Stat tile (level 4) */
+.sl-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.sl-tile { display: flex; flex-direction: column; gap: 3px; padding: 10px; min-width: 0; background: var(--paper-3); border: 1px solid var(--line); border-radius: var(--radius); }
+.sl-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 20px; }
+.sl-tile-label { font-weight: 500; font-size: 11.5px; color: var(--ink-2); }
+.sl-tile-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+.sl-tile-us { font: 500 21px/1.15 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.sl-tile-si { font: 500 12.5px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.sl-tile-compare { font-size: 12.5px; line-height: 1.35; color: var(--ink-2); }
+
+.sl-more-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--accent); font: 500 14px var(--font-body); }
+.sl-more-link:hover { text-decoration: underline; }
+.panel > .sl-chip, .panel > .sl-ibtn { align-self: flex-start; }

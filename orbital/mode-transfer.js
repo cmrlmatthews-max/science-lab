@@ -10,10 +10,17 @@
 //     isp      engine efficiency in seconds (280 solid, 340 kerosene, 450 hydrogen)
 //     phase    'orbit1' | 'coast' | 'orbit2'
 //     forBody  body the numbers belong to (so a body change made in another mode reloads a preset)
-//     showBoth, showArrow            display toggles (inside Show numbers)
-//     showNumbers                    the "Show numbers" switch (off by default)
+//     showBoth, showArrow            display toggles (level 5)
 //     sim      { ang, s, alpha, missed, auto }  live flight state, mutated in place so it survives a mode switch
 //   }
+//
+// INFORMATION LAYERS (ctx.layers, level 1-5 in store.level; see orbital/content-transfer.js for every word)
+//   1 Start    question, answer, flight stages, three picture buttons (TV satellite height, Moon, Mars); the trip loops by itself. No digits.
+//   2 Story    guided story (6 steps), fuel bar, idea chips with info cards.
+//   3 Explore  world, trip presets, start and end height, push buttons, Try this, time control.
+//   4 Numbers  five stat tiles (mph and km/s, miles and km, friendly time) with comparison lines.
+//   5 Deep     live readouts, the plan, fuel numbers, formulas, engine type, display toggles, sources.
+//   Cards: hover (Mac) or tap (phone) on the planet, craft, both orbits, the transfer path and the push markers.
 //
 // FLIGHT MODEL
 //   Circles: the craft moves at a constant angular rate, counter-clockwise (same sense as positionAtTime).
@@ -28,19 +35,19 @@
 
 import { THREE } from '../shared/scene.js';
 import { el, select, slider, segmented, toggle, button, stat, stats, section, sourceTag, fmt } from '../shared/ui.js';
-import { question, answer, tryThis, numbersSwitch } from '../shared/simple.js';
+import { question, answer, tryThis } from '../shared/simple.js';
+import { story, tile } from '../shared/layers.js';
+import { infoChip, infoButton } from '../shared/card.js';
+import { dual, friendlyDuration, nice } from '../shared/units.js';
+import { TEXT, getInfo } from './content-transfer.js';
 import { BODIES, BODY_ORDER, TRANSFER_PRESETS } from './bodies.js';
 import { hohmann, elementsFromApsides, samplePath, positionAtTime, propellantFraction, formatDuration } from './physics.js';
 import { sceneScale, createBody, createPath, createCraft, createArrow, createMarker, createStars, timeControl, frameSpace, spaceTheme } from './space.js';
 
 const TWO_PI = Math.PI * 2;
-const ENGINES = [
-  { value: '280', label: 'Solid rocket' },
-  { value: '340', label: 'Kerosene' },
-  { value: '450', label: 'Hydrogen' },
-];
+const ENGINES = TEXT.l5.engines;
 const SLIDER_RANGE = { earth: [200, 400000], moon: [20, 20000], mars: [100, 50000], sun: [40e6, 400e6] };
-const FUEL_SOURCE = 'Fuel share from the rocket equation. Higher engine efficiency needs less fuel.';
+const FUEL_SOURCE = TEXT.l5.sources.fuel;
 const WINDOW_FRAC = 0.06;
 const FLASH_S = 0.9;
 const LADDER = [
@@ -87,6 +94,18 @@ const CSS = `
 .tf-sw-line { flex: none; width: 22px; height: 0; border-top: 2px solid var(--tf-c, var(--ink-2)); }
 .tf-sw-line[data-dash="true"] { border-top-style: dashed; }
 .tf-sw-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #000; box-shadow: 0 0 0 1px #fff; margin: 0 6px; }
+.tf-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tf-choice { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 6px; min-height: 104px; padding: 10px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-3); color: var(--ink-2); text-align: center; }
+.tf-choice:hover { border-color: var(--line-strong); color: var(--ink); }
+.tf-choice[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-edge); box-shadow: inset 0 -2px 0 var(--accent); color: var(--ink); }
+.tf-choice svg { flex: none; background: #000; border-radius: 50%; }
+.tf-choice-label { font-size: 13.5px; font-weight: 600; line-height: 1.25; color: var(--ink); }
+.tf-ideas { display: flex; flex-direction: column; gap: 6px; }
+.tf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tf-explore { display: flex; flex-direction: column; gap: 12px; }
+.tf-deep { display: flex; flex-direction: column; gap: 12px; }
+.tf-formula { font-family: var(--font-mono); font-size: 12px; }
+.section-title .sl-ibtn { margin-left: 6px; vertical-align: middle; }
 .tf-3d-note { position: absolute; left: 10px; bottom: 8px; font-size: 11.5px; color: rgba(255,255,255,0.7); pointer-events: none; }
 `;
 
@@ -154,11 +173,15 @@ const PLAIN = {
 export default {
   id: 'transfer',
   label: 'Travel',
-  panelTitles: { a: 'Trip', b: 'What happens', c: 'Time' },
+  panelTitles: { a: 'Trip', b: 'Numbers', c: 'Time' },
   get _debug() { return dbg; },
 
   mount(ctx) {
-    const { stageEl, panelA, panelB, panelC, summaryEl, store, stage } = ctx;
+    const { stageEl, panelA, panelB, panelC, summaryEl, store, stage, layers, card } = ctx;
+    const lvl = () => layers.level();
+    card.setSource(getInfo);
+    ctx.setPanelMin('b', 4);
+    ctx.setPanelMin('c', 3);
     const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
     const styleEl = el('style', { id: 'transfer-style', text: CSS });
@@ -189,7 +212,6 @@ export default {
       }
       if (getT().showBoth == null) setT({ showBoth: true });
       if (getT().showArrow == null) setT({ showArrow: false });
-      if (getT().showNumbers == null) setT({ showNumbers: false });
     }
     const sim = getT().sim; // mutated in place
     if (!sim.phase) sim.phase = getT().phase || 'orbit1';
@@ -253,6 +275,9 @@ export default {
     let marker1 = null;
     let marker2 = null;
     let flash = null; // { origin:[x,y] km, dir:[x,y], t }
+    let holdAt = null; // story: pause the coast when sim.s reaches this many seconds
+    let dwell = 0;     // level 1: seconds spent in the high orbit before the loop starts again
+    const pushLabel = (n) => (lvl() >= 5 ? `Burn ${n}` : n === 1 ? TEXT.l1.labels.push1 : TEXT.l1.labels.push2);
 
     const note3d = el('div', { class: 'tf-3d-note', text: '' });
     stageEl.appendChild(note3d);
@@ -296,8 +321,8 @@ export default {
       if (sim.phase === 'orbit1' || g.same) return;
       const a = pol(sim.alpha, g.r1);
       const b = pol(sim.alpha + Math.PI, g.r2);
-      marker1 = createMarker('Burn 1', { side: a[0] >= 0 ? 'right' : 'left' });
-      marker2 = createMarker('Burn 2', { side: b[0] >= 0 ? 'right' : 'left' });
+      marker1 = createMarker(pushLabel(1), { side: a[0] >= 0 ? 'right' : 'left' });
+      marker2 = createMarker(pushLabel(2), { side: b[0] >= 0 ? 'right' : 'left' });
       marker1.setPosition(disp(a), k);
       marker2.setPosition(disp(b), k);
       world.add(marker1.object, marker2.object);
@@ -335,7 +360,7 @@ export default {
       const drawnR = Math.max(realUnits, minR);
       ek = Math.max(0, drawnR + GAP - g.r1 / k) * k;
       if (!bodyObj || lastBodyId !== body.id) rebuildBody(); else bodyObj.setScale(k);
-      note3d.textContent = bodyObj.exaggerated ? `${body.name} not to scale` : '';
+      note3d.textContent = bodyObj.exaggerated ? `${body.name} ${TEXT.l1.labels.notToScale}` : '';
 
       startPath.setPoints(dispAll(samplePath(g.mu, elementsFromApsides(g.mu, g.r1, g.r1), 200)), k);
       const tgt = dispAll(samplePath(g.mu, elementsFromApsides(g.mu, g.r2, g.r2), 200));
@@ -352,7 +377,7 @@ export default {
 
       if (reframe || bucket !== lastBucket || lastBodyId !== body.id || lastBucket === null) {
         const lowHug = g.r1 / Math.max(g.r1, g.r2) < 0.3;
-        frameSpace(stage, 48, { elevationDeg: lowHug ? 68 : 55, padding: 1.05 });
+        frameSpace(stage, 48, { elevationDeg: lowHug ? 68 : 55, padding: ctx.isNarrow() ? 1.3 : 1.05 });
       }
       lastBucket = bucket;
       craft.clearTrail();
@@ -436,6 +461,7 @@ export default {
     }
 
     function startOver(keepWarp = true) {
+      holdAt = null;
       sim.auto = false; sim.missed = false; sim.s = 0; sim.ang = 0;
       setPhase('orbit1');
       flash = null;
@@ -449,15 +475,26 @@ export default {
     }
 
     // ----- panel A -----
-    const lowName = () => (g.body.id === 'sun' ? 'inner path' : 'low orbit');
-    const highName = () => (g.body.id === 'sun' ? 'outer path' : 'high orbit');
+    const T1 = TEXT.l1;
+    const T3 = TEXT.l3;
+    const T4 = TEXT.l4;
+    const T5 = TEXT.l5;
+    const C3 = T3.controls;
+    const ic = (id, label) => infoButton(card, id, { label });
+    const chip = (id, label) => infoChip(card, id, label);
+    const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+    const lowName = () => (g.body.id === 'sun' ? C3.inner.toLowerCase() : C3.low.toLowerCase());
+    const highName = () => (g.body.id === 'sun' ? C3.outer.toLowerCase() : C3.high.toLowerCase());
+    const setPlaying = (v) => {
+      const t = store.get().time;
+      if (t.playing !== v) store.set({ time: { ...t, playing: v } });
+      if (tc) tc.set({ playing: v });
+    };
 
     function ensureRun() {
-      const t = store.get().time;
       const def = pickWarps(g.same ? g.p1 : g.tCoast).def;
       store.set({ time: { playing: true, warp: def } });
       tc.set({ playing: true, warp: def });
-      void t;
     }
 
     function onPrimary() {
@@ -487,24 +524,55 @@ export default {
       configChanged({ keepAng: false });
     }
 
-    const primary = button({ label: 'Fire burn 1', kind: 'primary', onClick: onPrimary });
+    // level 1: three picture buttons choose the trip; the trip then plays again and again
+    const DEST = { tv: ['earth', 'leo-geo'], moon: ['earth', 'leo-moon'], mars: ['sun', 'earth-mars'] };
+    const destKey = () => Object.keys(DEST).find((k) => DEST[k][0] === store.get().bodyId && DEST[k][1] === getT().presetId) || null;
+    function chooseDest(k) {
+      goRoute(DEST[k][0], DEST[k][1]);
+      runForMe();
+      paintChoices();
+    }
+    function svgIcon(kind) {
+      const NS = 'http://www.w3.org/2000/svg';
+      const mk = (tag, a) => { const e = document.createElementNS(NS, tag); Object.keys(a).forEach((n) => e.setAttribute(n, a[n])); return e; };
+      const svg = mk('svg', { viewBox: '0 0 64 64', width: 52, height: 52, 'aria-hidden': 'true' });
+      const ring = { tv: 24, moon: 28, mars: 28 }[kind];
+      const mid = { tv: ['#3f7fbf', 9], moon: ['#3f7fbf', 5], mars: ['#e8b54a', 7] }[kind];
+      const dot = { tv: ['#ff9a5c', 3.5], moon: ['#9a9a96', 4.5], mars: ['#b5593a', 5] }[kind];
+      svg.append(mk('circle', { cx: 32, cy: 32, r: ring, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-dasharray': '3 3', opacity: 0.7 }));
+      if (kind === 'tv') svg.append(mk('circle', { cx: 32, cy: 32, r: 14, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.2, opacity: 0.5 }));
+      svg.append(mk('circle', { cx: 32, cy: 32, r: mid[1], fill: mid[0] }), mk('circle', { cx: 32 + ring * 0.7, cy: 32 - ring * 0.7, r: dot[1], fill: dot[0] }));
+      return svg;
+    }
+    const choiceBtns = T1.choices.map((c) => {
+      const b = el('button', { type: 'button', class: 'tf-choice', 'data-choice': c.id, 'aria-pressed': 'false' }, svgIcon(c.id), el('span', { class: 'tf-choice-label', text: c.label }));
+      b.addEventListener('click', () => chooseDest(c.id));
+      return b;
+    });
+    const choicesEl = el('div', { class: 'tf-choices', role: 'group', 'aria-label': 'Where to go' }, choiceBtns);
+    function paintChoices() {
+      const k = destKey();
+      choiceBtns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.choice === k ? 'true' : 'false'));
+    }
+
+    const primary = button({ label: C3.push1, kind: 'primary', onClick: onPrimary });
     primary.classList.add('tf-primary');
     primary.dataset.role = 'primary';
-    const showMe = button({ label: 'Show me', onClick: () => runForMe() });
+    const showMe = button({ label: C3.showMe, onClick: () => runForMe() });
     showMe.dataset.role = 'show-me';
-    const startAgain = button({ label: 'Start again', kind: 'ghost', onClick: () => startOver() });
+    const startAgain = button({ label: C3.startAgain, kind: 'ghost', onClick: () => startOver() });
     startAgain.dataset.role = 'start-again';
     const statusEl = el('p', { class: 'tf-status', 'aria-live': 'polite' });
     const flowEl = el('div', { class: 'tf-flow' }, primary, statusEl, el('div', { class: 'tf-actions' }, showMe, startAgain));
 
     const bodySel = select({
-      label: 'World',
+      label: C3.world,
       options: BODY_ORDER.map((id) => ({ value: id, label: BODIES[id].name })),
       value: store.get().bodyId,
       onChange: onBodyChange,
     });
-    const presetsEl = el('div', { class: 'tf-presets', role: 'group', 'aria-label': 'Trip' });
-    const tripEl = el('div', { class: 'field' }, el('div', { class: 'field-head' }, el('span', { class: 'field-label', text: 'Trip' })), presetsEl);
+    const presetsEl = el('div', { class: 'tf-presets', role: 'group', 'aria-label': C3.trip });
+    const tripEl = el('div', { class: 'field' }, el('div', { class: 'field-head' }, el('span', { class: 'field-label', text: C3.trip }), ic('transferPath', 'the transfer path')), presetsEl);
 
     const posOf = (v, body) => {
       const [lo, hi] = SLIDER_RANGE[body.id];
@@ -516,7 +584,9 @@ export default {
     };
     const toVal = (body, r) => (body.id === 'sun' ? r : r - body.radius);
     const toR = (body, v) => (body.id === 'sun' ? v : v + body.radius);
-    const fmtVal = (body, v) => (body.id === 'sun' ? `${fmt(v / 1e6, 1)} million km` : `${fmt(v, 0)} km`);
+    const fmtVal = (body, v) => (body.id === 'sun'
+      ? `${nice(v / 1e6 / 1.609344, 3)} million mi (${nice(v / 1e6, 3)} million km)`
+      : dual.km(v).text);
     const STEP = 0.0005;
 
     function makeOrbitSlider(label, getV, onValue) {
@@ -532,127 +602,123 @@ export default {
       });
       return s;
     }
-    const sStart = makeOrbitSlider('Start orbit height', () => toVal(bodyOf(), getT().alt1 + bodyOf().radius), (v) => {
+    const sStart = makeOrbitSlider(C3.startHeight, () => toVal(bodyOf(), getT().alt1 + bodyOf().radius), (v) => {
       setT({ alt1: bodyOf().id === 'sun' ? v - bodyOf().radius : v, presetId: 'custom' });
       configChanged({ keepAng: true });
     });
-    const sTarget = makeOrbitSlider('Target orbit height', () => toVal(bodyOf(), getT().r2), (v) => {
+    const sTarget = makeOrbitSlider(C3.targetHeight, () => toVal(bodyOf(), getT().r2), (v) => {
       setT({ r2: toR(bodyOf(), v), presetId: 'custom' });
       configChanged({ keepAng: true });
     });
-    const swapBtn = button({ label: 'Swap start and target', kind: 'ghost', onClick: () => swapRoute() });
+    const swapBtn = button({ label: C3.swap, kind: 'ghost', onClick: () => swapRoute() });
     const engineSeg = segmented({
-      label: 'Engine type', options: ENGINES, value: String(getT().isp),
+      label: T5.labels.engine, options: ENGINES, value: String(getT().isp),
       onChange: (v) => { setT({ isp: Number(v) }); g = geometry(); paintStatic(); },
     });
 
     const trySteps = tryThis([
-      { label: 'Watch the whole trip', hint: 'Two burns, one long coast.', run: () => {
+      { ...T3.tries[0], run: () => {
         goRoute(store.get().bodyId, (TRANSFER_PRESETS[store.get().bodyId] || [])[0].id);
         runForMe();
       } },
-      { label: 'Skip the second burn', hint: 'It swings out, then falls back.', run: () => {
+      { ...T3.tries[1], run: () => {
         startOver();
         ensureRun();
         fireBurn1();
       } },
-      { label: 'Go to the Moon\'s distance', hint: 'Farther takes days, not hours.', run: () => {
+      { ...T3.tries[2], run: () => {
         goRoute('earth', 'leo-moon');
         runForMe();
       } },
-      { label: 'Come back down', hint: 'Now both burns slow it down.', run: () => {
+      { ...T3.tries[3], run: () => {
         if (g.up) swapRoute();
         runForMe();
       } },
     ]);
 
-    // "Show numbers": one switch in panel A (controls) and one in panel B (readouts), kept in step
-    let numA = null;
-    let numB = null;
-    const numC = el('div', { class: 'section', style: { display: 'none' } });
-    function setNumbers(v, from) {
-      setT({ showNumbers: !!v });
-      if (from !== 'A') numA.set(!!v);
-      if (from !== 'B') numB.set(!!v);
-      numC.style.display = v ? '' : 'none';
-    }
-    numA = numbersSwitch({ value: !!getT().showNumbers, onChange: (v) => setNumbers(v, 'A') },
-      sStart.el, sTarget.el, swapBtn, engineSeg.el, el('div', { class: 'row' }, sourceTag(FUEL_SOURCE)));
+    // ----- the story (level 2 and 3) -----
+    const tvRoute = () => { if (store.get().bodyId !== 'earth' || getT().presetId !== 'leo-geo') goRoute('earth', 'leo-geo'); };
+    const intoCoast = () => { if (sim.phase !== 'coast' || g.same) { startOver(); fireBurn1(); } sim.missed = false; sim.auto = false; };
+    const storyRuns = [
+      () => { tvRoute(); startOver(); setPlaying(true); },
+      () => { tvRoute(); startOver(); setPlaying(true); fireBurn1(); holdAt = 0.1 * g.tCoast; },
+      () => { tvRoute(); intoCoast(); sim.s = Math.max(sim.s, 0.1 * g.tCoast); holdAt = 0.9 * g.tCoast; setPlaying(true); },
+      () => { tvRoute(); intoCoast(); sim.s = Math.max(sim.s, 0.85 * g.tCoast); sim.auto = true; holdAt = null; setPlaying(true); },
+      () => { tvRoute(); startOver(); fireBurn1(); sim.s = 0.4 * g.tCoast; holdAt = null; setPlaying(true); },
+      () => { tvRoute(); startOver(); holdAt = null; runForMe(); },
+    ];
+    const storyW = story(TEXT.l2.steps.map((s, i) => ({ ...s, run: storyRuns[i] })), { title: 'The story' });
 
-    panelA.append(
-      question('How do you get from a low orbit to a high one?', 'Two short engine burns do it. Fire the first one and watch.'),
-      bodySel.el,
-      tripEl,
-      flowEl,
-      trySteps,
-      numA.el,
-    );
+    // ----- the ideas (info chips) -----
+    const ideasEl = el('div', { class: 'tf-ideas' },
+      el('span', { class: 'tf-label', text: 'What do these words mean?' }),
+      el('div', { class: 'tf-chips' },
+        chip('orbit', 'Orbit'), chip('push', 'Push'), chip('coast', 'Coast'), chip('transferPath', 'Transfer path'),
+        chip('speedChange', 'Speed change'), chip('fuelShare', 'Fuel share'), chip('launchWindow', 'Launch window')));
 
-    function paintPresets() {
-      const b = bodyOf();
-      const T = getT();
-      presetsEl.replaceChildren(...(TRANSFER_PRESETS[b.id] || []).map((p) => {
-        const pl = PLAIN[p.id] || {};
-        const a1 = p.alt1 != null ? p.alt1 : p.r1 - b.radius;
-        const r2 = p.r2 != null ? p.r2 : b.radius + p.alt2;
-        const sub = pl.sub || (b.id === 'sun'
-          ? `${fmt((a1 + b.radius) / 1e6, 1)} to ${fmt(r2 / 1e6, 1)} million km from the Sun`
-          : `${fmt(a1, 0)} km to ${fmt(r2 - b.radius, 0)} km above the surface`);
-        const btn = el('button', { type: 'button', class: 'tf-preset', 'data-preset': p.id, 'aria-pressed': T.presetId === p.id ? 'true' : 'false' },
-          el('span', { class: 'tf-preset-name', text: pl.name || p.name }),
-          el('span', { class: 'tf-preset-sub', text: sub }));
-        btn.addEventListener('click', () => {
-          loadPreset(b, p);
-          configChanged({ keepAng: false, reframe: true, resetWarp: true });
-        });
-        return btn;
-      }));
-    }
-
-    // ----- panel B -----
+    // ----- panel B pieces -----
     const answerBox = answer({ kind: 'info', title: '', text: '' });
     let lastAnswer = '';
-    const stepLabels = ['Low orbit', 'Coast', 'High orbit'];
-    const stepsEl = el('ol', { class: 'tf-steps', 'aria-label': 'Flight stage' },
-      stepLabels.map((t, i) => el('li', { class: 'tf-step', 'data-state': 'todo' }, el('span', { class: 'tf-dot', text: String(i + 1) }), el('span', { class: 'tf-step-label', text: t }))));
+    const stepLabels = [C3.low, C3.coast, C3.high];
+    const stepsEl = el('ol', { class: 'tf-steps', 'aria-label': C3.stage },
+      stepLabels.map((t) => el('li', { class: 'tf-step', 'data-state': 'todo' }, el('span', { class: 'tf-dot', text: '' }), el('span', { class: 'tf-step-label', text: t }))));
     const tripTimeEl = el('p', { class: 'tf-trip' });
     const fuelTextEl = el('p', { class: 'tf-fuel-text' });
     const windowNote = el('p', { class: 'tf-note' });
 
-    const liveHeight = stat({ label: 'Height above the surface', value: 0, unit: 'km', digits: 0 });
-    const liveSpeed = stat({ label: 'Speed now', value: 0, unit: 'km/s', digits: 2 });
-    const liveLeft = stat({ label: 'Coast time left', value: '—', digits: 1 });
+    const liveHeight = stat({ label: T5.labels.height, value: 0, unit: 'km', digits: 0 });
+    const liveSpeed = stat({ label: T5.labels.speedNow, value: 0, unit: 'km/s', digits: 2 });
+    const liveLeft = stat({ label: T5.labels.coastLeft, value: '—', digits: 1 });
     liveHeight.el.dataset.key = 'height'; liveSpeed.el.dataset.key = 'speed'; liveLeft.el.dataset.key = 'left';
 
-    const tBurn1 = stat({ label: 'Burn 1 speed change', value: 0, unit: 'km/s', digits: 2 });
-    const tBurn2 = stat({ label: 'Burn 2 speed change', value: 0, unit: 'km/s', digits: 2 });
-    const tTotal = stat({ label: 'Total speed change', value: 0, unit: 'km/s', digits: 2 });
-    const tCoast = stat({ label: 'Coast time', value: 0, unit: 'h', digits: 1 });
-    const tFuel = stat({ label: 'Fuel share of the craft mass', value: 0, unit: '%', digits: 1, source: FUEL_SOURCE });
-    const tV1 = stat({ label: 'Speed in the start orbit', value: 0, unit: 'km/s', digits: 2 });
-    const tV2 = stat({ label: 'Speed in the target orbit', value: 0, unit: 'km/s', digits: 2 });
+    const tBurn1 = stat({ label: T5.labels.burn1, value: 0, unit: 'km/s', digits: 2 });
+    const tBurn2 = stat({ label: T5.labels.burn2, value: 0, unit: 'km/s', digits: 2 });
+    const tTotal = stat({ label: T5.labels.total, value: 0, unit: 'km/s', digits: 2 });
+    const tCoast = stat({ label: T5.labels.coastTime, value: 0, unit: 'h', digits: 1 });
+    const tFuel = stat({ label: T5.labels.fuel, value: 0, unit: '%', digits: 1, source: FUEL_SOURCE });
+    const tV1 = stat({ label: T5.labels.v1, value: 0, unit: 'km/s', digits: 2 });
+    const tV2 = stat({ label: T5.labels.v2, value: 0, unit: 'km/s', digits: 2 });
     [['burn1', tBurn1], ['burn2', tBurn2], ['total', tTotal], ['coast', tCoast], ['fuel', tFuel], ['v1', tV1], ['v2', tV2]].forEach(([key, t]) => { t.el.dataset.key = key; });
 
     const barFuel = el('div', { class: 'tf-bar-fuel' });
     const barRest = el('div', { class: 'tf-bar-rest' });
     const bar = el('div', { class: 'tf-bar', role: 'img' }, barFuel, barRest);
-    const fuelSection = section('Fuel needed', bar, fuelTextEl);
+    const fuelSection = section(C3.fuelHead, bar, fuelTextEl);
+    fuelSection.querySelector('.section-title').append(ic('fuelShare', 'fuel share'));
     const keyFuel = el('span', { text: '' });
     const keyRest = el('span', { text: '' });
     const keyEl = el('ul', { class: 'tf-key' },
       el('li', {}, el('span', { class: 'tf-key-sw', style: 'background: var(--accent-soft); background: color-mix(in srgb, var(--accent) 38%, transparent); border-color: var(--accent-edge)' }), keyFuel),
       el('li', {}, el('span', { class: 'tf-key-sw', style: 'background: var(--track)' }), keyRest));
     const notesEl = el('div', { class: 'tf-notes' });
-    const windowSource = el('div', { class: 'row' }, sourceTag('Synodic period of Earth and Mars, about 780 days'));
+    const windowSource = el('div', { class: 'row' }, sourceTag(T5.sources.window));
 
-    numB = numbersSwitch({ value: !!getT().showNumbers, onChange: (v) => setNumbers(v, 'B') },
-      section('Where the craft is', stats(liveHeight.el, liveSpeed.el, liveLeft.el)),
-      section('The plan', stats(tBurn1.el, tBurn2.el, tTotal.el, tCoast.el, tFuel.el, tV1.el, tV2.el)),
-      section('Fuel in numbers', keyEl),
+    // level 4: the five tiles
+    const tiles = {
+      push1: tile({ label: T4.tiles.push1.label, us: '', si: '', compare: '', infoId: 'push1' }),
+      push2: tile({ label: T4.tiles.push2.label, us: '', si: '', compare: '', infoId: 'push2' }),
+      total: tile({ label: T4.tiles.total.label, us: '', si: '', compare: '', infoId: 'speedChange' }),
+      time: tile({ label: T4.tiles.time.label, us: '', si: '', compare: '', infoId: 'coast' }),
+      fuel: tile({ label: T4.tiles.fuel.label, us: '', si: '', compare: '', infoId: 'fuelShare' }),
+    };
+    const glossEl = el('div', { class: 'tf-notes' },
+      Object.values(T4.glosses).map((t) => el('p', { class: 'tf-note', text: t })));
+    const tilesSection = section(T4.headings.plan,
+      el('p', { class: 'tf-caption', text: T4.headings.glossLine }),
+      el('div', { class: 'sl-tiles' }, tiles.push1.el, tiles.push2.el, tiles.total.el, tiles.time.el, tiles.fuel.el),
+      glossEl);
+
+    // level 5: the full numbers
+    const formulasEl = el('div', { class: 'tf-notes' }, T5.formulas.map((t) => el('p', { class: 'tf-note tf-formula', text: t })));
+    const deepEl = el('div', { class: 'tf-deep' },
+      section(T5.labels.where, stats(liveHeight.el, liveSpeed.el, liveLeft.el)),
+      section(T5.labels.plan, stats(tBurn1.el, tBurn2.el, tTotal.el, tCoast.el, tFuel.el, tV1.el, tV2.el)),
+      section(T5.labels.fuelNumbers, keyEl),
       notesEl,
-      windowSource);
-
-    panelB.append(answerBox.el, stepsEl, tripTimeEl, fuelSection, windowNote, numB.el);
+      section(T5.labels.formulasTitle, formulasEl),
+      windowSource,
+      el('div', { class: 'row' }, sourceTag(FUEL_SOURCE)),
+      el('div', { class: 'row' }, sourceTag(T5.sources.bodies)));
 
     // ----- panel C -----
     const tcWrap = el('div', { class: 'tf-time' });
@@ -671,14 +737,11 @@ export default {
       });
       tcWrap.replaceChildren(tc.el);
     }
-    panelC.append(tcWrap);
-    numC.append(
-      el('h3', { class: 'section-title', text: 'Display' }),
+    const displayEl = el('div', { class: 'section' },
+      el('h3', { class: 'section-title', text: T5.labels.display }),
       el('div', { class: 'section-body' },
-        toggle({ label: 'Show both orbits', value: getT().showBoth !== false, onChange: (v) => { setT({ showBoth: v }); syncVisibility(); } }).el,
-        toggle({ label: 'Show speed arrow', value: !!getT().showArrow, onChange: (v) => { setT({ showArrow: v }); if (!v) speedArrow.setVisible(false); stage.requestRender(); } }).el));
-    numC.style.display = getT().showNumbers ? '' : 'none';
-    panelC.append(numC);
+        toggle({ label: T5.labels.showBoth, value: getT().showBoth !== false, onChange: (v) => { setT({ showBoth: v }); syncVisibility(); } }).el,
+        toggle({ label: T5.labels.showArrow, value: !!getT().showArrow, onChange: (v) => { setT({ showArrow: v }); if (!v) speedArrow.setVisible(false); stage.requestRender(); } }).el));
     const swStart = el('span', { class: 'tf-sw-line' });
     const swTarget = el('span', { class: 'tf-sw-line', 'data-dash': 'true' });
     const swPath = el('span', { class: 'tf-sw-line' });
@@ -686,28 +749,81 @@ export default {
       el('li', { class: 'legend-item' }, swStart, 'Where it starts'),
       el('li', { class: 'legend-item' }, swTarget, 'Where it is going'),
       el('li', { class: 'legend-item' }, swPath, 'Path of the craft'),
-      el('li', { class: 'legend-item' }, el('span', { class: 'tf-sw-dot' }), 'Engine burns'));
+      el('li', { class: 'legend-item' }, el('span', { class: 'tf-sw-dot' }), 'Engine pushes'));
     function paintLegend() {
       swStart.style.borderTopColor = theme.ink2;
       swTarget.style.borderTopColor = theme.accent;
       swPath.style.borderTopColor = theme.craft;
     }
     paintLegend();
-    panelC.append(section('What you see', legendEl));
+
+    // ----- assemble the panels and gate every piece to its layer -----
+    const exploreEl = layers.gate(el('div', { class: 'tf-explore' }, bodySel.el, tripEl, flowEl, sStart.el, sTarget.el, swapBtn), 3);
+    const engineEl = layers.gate(el('div', { class: 'tf-engine' }, engineSeg.el), 5);
+    panelA.append(
+      question(T1.question, T1.sub),
+      layers.gate(choicesEl, 1, 1),
+      answerBox.el,
+      stepsEl,
+      layers.gate(storyW.el, 2, 2),
+      layers.gate(tripTimeEl, 2),
+      layers.gate(fuelSection, 2),
+      layers.gate(ideasEl, 2),
+      exploreEl,
+      layers.gate(trySteps, 3),
+      engineEl,
+    );
+    panelB.append(layers.gate(windowNote, 4), layers.gate(tilesSection, 4), layers.gate(deepEl, 5));
+    panelC.append(tcWrap, layers.gate(displayEl, 5), section('What you see', legendEl));
 
     // ----- painting -----
+    function paintPresets() {
+      const b = bodyOf();
+      const T = getT();
+      presetsEl.replaceChildren(...(TRANSFER_PRESETS[b.id] || []).map((p) => {
+        const pl = PLAIN[p.id] || {};
+        const a1 = p.alt1 != null ? p.alt1 : p.r1 - b.radius;
+        const r2 = p.r2 != null ? p.r2 : b.radius + p.alt2;
+        const sub = pl.sub || (b.id === 'sun'
+          ? `${fmtVal(b, a1 + b.radius)} to ${fmtVal(b, r2)} from the Sun`
+          : `${dual.km(a1).text} to ${dual.km(r2 - b.radius).text} above the surface`);
+        const btn = el('button', { type: 'button', class: 'tf-preset', 'data-preset': p.id, 'aria-pressed': T.presetId === p.id ? 'true' : 'false' },
+          el('span', { class: 'tf-preset-name', text: pl.name || p.name }),
+          el('span', { class: 'tf-preset-sub', text: sub }));
+        btn.addEventListener('click', () => {
+          loadPreset(b, p);
+          configChanged({ keepAng: false, reframe: true, resetWarp: true });
+        });
+        return btn;
+      }));
+    }
+
+    function paintSummary() {
+      const b = g.body;
+      const fw = fuelWords(g.frac);
+      let sumText;
+      if (g.same) sumText = lvl() >= 3 ? `${b.name} · same orbit · no burn needed` : `${b.name} · same orbit · no push needed`;
+      else if (lvl() <= 2) sumText = `${T1.summary[destKey() || 'other']} · ${fw.short}`;
+      else {
+        const route = PLAIN[getT().presetId] ? PLAIN[getT().presetId].route : (g.up ? `${lowName()} to ${highName()}` : `${highName()} to ${lowName()}`);
+        sumText = `${b.name} · ${route} · ${plainDur(g.tCoast)} · ${fw.short}`;
+      }
+      summaryEl.replaceChildren(el('span', { style: { display: 'block', whiteSpace: 'normal' }, text: sumText }));
+    }
+
     function paintStatic() {
       const b = g.body;
       const T = getT();
       // controls
       bodySel.set(b.id);
-      sStart.el.querySelector('.field-label').textContent = b.id === 'sun' ? 'Start distance from the Sun' : 'Start orbit height';
-      sTarget.el.querySelector('.field-label').textContent = b.id === 'sun' ? 'Target distance from the Sun' : 'Target orbit height';
+      sStart.el.querySelector('.field-label').textContent = b.id === 'sun' ? C3.startDistance : C3.startHeight;
+      sTarget.el.querySelector('.field-label').textContent = b.id === 'sun' ? C3.targetDistance : C3.targetHeight;
       sStart.set(posOf(toVal(b, g.r1), b));
       sTarget.set(posOf(toVal(b, g.r2), b));
       engineSeg.set(String(T.isp));
       paintPresets();
-      // tiles (inside Show numbers)
+      paintChoices();
+      // level 5 stats
       const word = (up) => (g.same ? 'No burn needed' : up ? 'Speed up' : 'Slow down');
       tBurn1.update({ value: g.dv1, hint: word(g.up) });
       tBurn2.update({ value: g.dv2, hint: word(g.up) });
@@ -717,75 +833,63 @@ export default {
       tFuel.update({ value: g.frac * 100 });
       tV1.update({ value: g.v1 });
       tV2.update({ value: g.v2 });
+      // level 4 tiles
+      const nz = !g.same;
+      const dv = (v, key) => { const t = dual.kmps(v, 2); tiles[key].update({ us: nz ? t.us : '—', si: nz ? t.si : '', compare: nz ? T4.tiles[key].compare(v) : '' }); };
+      dv(g.dv1, 'push1'); dv(g.dv2, 'push2'); dv(g.total, 'total');
+      tiles.time.update({ us: nz ? friendlyDuration(g.tCoast) : '—', si: null, compare: nz ? T4.tiles.time.compare(g.tCoast) : '' });
+      tiles.fuel.update({ us: nz ? `${nice(g.frac * 100, 2)}%` : '—', si: null, compare: nz ? T4.tiles.fuel.compare(g.frac) : '' });
       const fuelPct = g.frac * 100;
       // plain fuel bar
       const fw = fuelWords(g.frac);
       fuelSection.style.display = g.same ? 'none' : '';
       barFuel.style.width = `${fuelPct}%`;
-      barFuel.textContent = fuelPct >= 12 ? 'Fuel' : '';
+      barFuel.textContent = fuelPct >= 12 ? C3.fuelBarFuel : '';
       barFuel.style.borderRight = fuelPct > 0.05 ? '' : '0';
-      barRest.textContent = 100 - fuelPct >= 20 ? 'Everything else' : '';
+      barRest.textContent = 100 - fuelPct >= 20 ? C3.fuelBarRest : '';
       fuelTextEl.textContent = `${fw.head} of the craft is fuel.`;
       keyFuel.textContent = `Fuel ${fmt(fuelPct, 1)}%`;
       keyRest.textContent = `Everything else ${fmt(100 - fuelPct, 1)}%`;
       bar.setAttribute('aria-label', `${fw.head} of the craft is fuel`);
-      liveHeight.el.querySelector('.stat-label').textContent = b.id === 'sun' ? 'Distance from the Sun' : 'Height above the surface';
+      liveHeight.el.querySelector('.stat-label').textContent = b.id === 'sun' ? T5.labels.distance : T5.labels.height;
       liveHeight.update({ unit: b.id === 'sun' ? 'million km' : 'km', digits: b.id === 'sun' ? 1 : 0 });
       // trip time and stepper wording
-      tripTimeEl.textContent = g.same ? '' : `Trip time: ${plainDur(g.tCoast, true)}`;
+      tripTimeEl.textContent = g.same ? '' : lvl() >= 3 ? `${C3.tripTime}: ${plainDur(g.tCoast, true)}` : TEXT.l2.tripLine(g.tCoast);
       tripTimeEl.style.display = g.same ? 'none' : '';
-      const labels = g.up ? [lowName(), 'Coast', highName()] : [highName(), 'Coast', lowName()];
+      const labels = g.up ? [lowName(), C3.coast, highName()] : [highName(), C3.coast, lowName()];
       Array.from(stepsEl.children).forEach((li, i) => {
-        li.querySelector('.tf-step-label').textContent = labels[i].charAt(0).toUpperCase() + labels[i].slice(1);
+        li.querySelector('.tf-step-label').textContent = cap(labels[i]);
       });
-      // launch window and numbers-only notes
+      // launch window and the notes that belong to level 5
       const win = b.id === 'sun' && T.presetId === 'earth-mars';
-      windowNote.textContent = win ? 'A real trip must leave when Mars will be at the meeting point. That launch window comes about every 26 months.' : '';
+      windowNote.textContent = win ? T5.notes.window : '';
       windowNote.style.display = win ? '' : 'none';
       windowSource.style.display = win ? '' : 'none';
       const notes = [];
       if (!g.same) {
-        notes.push(el('p', { class: 'tf-note', text: g.up
-          ? 'Burn 1 adds speed, so the far side of the path rises to the target orbit. Burn 2 adds speed again to make the path round.'
-          : 'Burn 1 slows the craft, so the far side of the path dips down to the target orbit. Burn 2 slows the craft again to make the path round.' }));
+        notes.push(el('p', { class: 'tf-note', text: g.up ? T5.notes.up : T5.notes.down }));
+        if (g.up) notes.push(el('p', { class: 'tf-note', text: T5.notes.paradox }));
       }
       notesEl.replaceChildren(...notes);
-      // summary
-      const route = PLAIN[T.presetId] ? PLAIN[T.presetId].route : (g.up ? `${lowName()} to ${highName()}` : `${highName()} to ${lowName()}`);
-      const sumText = g.same
-        ? `${b.name} · same orbit · no burn needed`
-        : `${b.name} · ${route} · ${plainDur(g.tCoast)} · ${fw.short}`;
-      summaryEl.replaceChildren(el('span', { style: { display: 'block', whiteSpace: 'normal' }, text: sumText }));
+      paintSummary();
       lastAnswer = '';
       paintLive(true);
     }
 
-    function answerFor(left) {
-      const sun = g.body.id === 'sun';
-      const lo = lowName();
-      const hi = highName();
-      if (g.same) return { kind: 'info', title: 'Already there', text: 'The start and the end are the same orbit, so no burn is needed. Pick a different trip.' };
+    function answerFor() {
+      const A = T1.answers;
+      if (g.same) return { kind: 'info', title: 'Already there', text: T3.status.same };
       const ph = sim.phase;
       if (ph === 'orbit1') {
-        return g.up
-          ? { kind: 'info', title: `Ready ${sun ? 'on' : 'in'} the ${lo}`, text: `Burn 1 will speed the craft up so its path stretches out to the ${hi}.` }
-          : { kind: 'info', title: `Ready ${sun ? 'on' : 'in'} the ${hi}`, text: `Burn 1 will slow the craft down so its path dips in to the ${lo}.` };
+        const dk = destKey();
+        if (dk) return { kind: 'info', ...A[dk] };
+        return { kind: 'info', title: A.ready.title, text: g.up ? T3.status.ready : T3.status.readyDown };
       }
-      if (ph === 'orbit2') {
-        return { kind: 'ok', title: 'It made it', text: g.up
-          ? 'Burn 2 turned the long oval into a circle. Strange but true: it now moves slower than when it started.'
-          : 'Burn 2 turned the long oval into a circle. Strange but true: it now moves faster than when it started.' };
-      }
-      if (sim.missed) {
-        const ready = windowOpen() ? ' Burn 2 is ready again.' : '';
-        return g.up
-          ? { kind: 'warn', title: 'It fell back', text: `Without the second burn it stays on the oval and swings back down.${ready}` }
-          : { kind: 'warn', title: 'It swung back up', text: `Without the second burn it stays on the oval and swings back up.${ready}` };
-      }
-      if (windowOpen()) return { kind: 'info', title: 'At the far end', text: 'Fire burn 2 now to turn the long oval into a circle.' };
-      return g.up
-        ? { kind: 'info', title: 'Coasting uphill', text: 'The engine is off. The craft climbs and slows down, like a ball thrown upward.' }
-        : { kind: 'info', title: 'Coasting downhill', text: 'The engine is off. The craft falls and speeds up, like a ball dropped from a height.' };
+      if (ph === 'orbit2') return { kind: 'ok', ...(g.up ? A.done : A.doneDown) };
+      if (sim.missed) return { kind: 'warn', ...(g.up ? A.fell : A.fellDown) };
+      if (windowOpen()) return { kind: 'info', ...A.far };
+      if (flash) return { kind: 'info', ...(g.up ? A.push1 : A.push1Down) };
+      return { kind: 'info', ...(g.up ? A.coast : A.coastDown) };
     }
 
     let liveClock = 1;
@@ -796,17 +900,20 @@ export default {
       const ph = sim.phase;
       const win = windowOpen();
       // buttons
-      const label = ph === 'orbit2' ? 'Done. Start again' : ph === 'coast' ? 'Fire burn 2' : 'Fire burn 1';
+      const burnWord = lvl() >= 5;
+      const label = ph === 'orbit2' ? C3.again
+        : ph === 'coast' ? (burnWord ? 'Fire burn 2' : C3.push2)
+          : (burnWord ? 'Fire burn 1' : C3.push1);
       if (primary.textContent !== label) primary.textContent = label;
       primary.disabled = g.same || (ph === 'coast' && !win);
       showMe.disabled = g.same;
-      // stepper
+      // stepper (digits only at level 4 and up)
       const order = ['orbit1', 'coast', 'orbit2'];
       const cur = order.indexOf(ph);
       Array.from(stepsEl.children).forEach((li, i) => {
         li.dataset.state = i < cur ? 'done' : i === cur ? 'current' : 'todo';
         li.setAttribute('aria-current', i === cur ? 'step' : 'false');
-        li.querySelector('.tf-dot').textContent = i < cur ? '✓' : String(i + 1);
+        li.querySelector('.tf-dot').textContent = i < cur ? '✓' : (lvl() >= 4 ? String(i + 1) : '');
       });
       panelB.dataset.phase = ph;
       // readouts
@@ -819,15 +926,15 @@ export default {
       else { const d = formatDuration(left); liveLeft.update({ value: d.value, unit: d.unit, digits: 1, hint: win ? 'Burn 2 is ready' : sim.missed ? 'To the next pass' : '' }); }
       // status line
       let msg;
-      if (g.same) msg = 'No burn is needed. Pick a different trip.';
-      else if (ph === 'orbit1') msg = g.up ? 'Burn 1 speeds the craft up.' : 'Burn 1 slows the craft down.';
+      if (g.same) msg = T3.status.same;
+      else if (ph === 'orbit1') msg = g.up ? T3.status.ready : T3.status.readyDown;
       else if (ph === 'orbit2') msg = `In the ${g.up ? highName() : lowName()}. The trip is done.`;
-      else if (sim.missed) msg = win ? 'Burn 2 was missed, but the far end is here again. Fire burn 2.' : `Burn 2 was missed. The far end comes again in ${plainDur(left)}.`;
-      else if (win) msg = 'Near the far end. Fire burn 2 now.';
+      else if (sim.missed) msg = win ? 'The second push was missed, but the far end is here again. Fire it now.' : `The second push was missed. The far end comes again in ${plainDur(left)}.`;
+      else if (win) msg = T3.status.near;
       else msg = `Coasting. ${plainDur(left)} to go. Wait for the far end.`;
       if (statusEl.textContent !== msg) statusEl.textContent = msg;
       // answer
-      const ans = answerFor(left);
+      const ans = answerFor();
       const key = `${ans.kind}|${ans.title}|${ans.text}`;
       if (key !== lastAnswer) { lastAnswer = key; answerBox.update(ans); }
     }
@@ -836,6 +943,7 @@ export default {
     function configChanged({ keepAng = false, reframe = false, resetWarp = false } = {}) {
       g = geometry();
       const ang = sim.ang;
+      holdAt = null;
       sim.auto = false; sim.missed = false; sim.s = 0;
       sim.ang = keepAng && sim.phase === 'orbit1' ? ang : 0;
       sim.phase = 'orbit1';
@@ -856,6 +964,20 @@ export default {
       configChanged({ keepAng: false, reframe: true, resetWarp: true });
     }
 
+    // a level change: new words, new marker labels, and the right scene for the new layer
+    layers.onChange((lv, prev) => {
+      if (marker1) marker1.setLabel(pushLabel(1));
+      if (marker2) marker2.setLabel(pushLabel(2));
+      if (lv === 1 && prev > 1) {
+        if (!destKey()) goRoute('earth', 'leo-geo');
+        startOver(); setPlaying(true); runForMe();
+      } else if (lv === 2 && prev < 2) {
+        storyW.go(0);
+      }
+      paintStatic();
+      stage.requestRender();
+    });
+
     // ----- frame loop -----
     function update(dt) {
       const { playing, warp } = store.get().time;
@@ -873,14 +995,20 @@ export default {
           } else {
             sim.s += ds;
           }
+          if (holdAt != null && sim.s >= holdAt) { sim.s = holdAt; holdAt = null; setPlaying(false); }
         }
       }
+      // level 1: when the craft has settled in the high orbit for a moment, play the trip again
+      if (sim.phase === 'orbit2' && lvl() === 1 && playing) {
+        dwell += dt;
+        if (dwell > 3.5) { dwell = 0; startOver(); runForMe(); }
+      } else dwell = 0;
       if (sim.phase === 'coast' && !sim.missed && !g.same && sim.s > g.tCoast * (1 + WINDOW_FRAC)) { sim.missed = true; syncVisibility(); }
       const pv = posVel();
       if (sim.phase === 'orbit1') tfGroup.rotation.y = rotFor(sim.ang);
       craft.setPosition(disp(pv.r), k);
       if (craft.setHeading && pv.v) craft.setHeading(pv.v);
-      if (getT().showArrow) speedArrow.set(disp(pv.r), pv.v, k, 9);
+      if (getT().showArrow && lvl() >= 5) speedArrow.set(disp(pv.r), pv.v, k, 9);
       else speedArrow.setVisible(false);
       if (flash) {
         flash.t -= dt;
@@ -903,6 +1031,117 @@ export default {
     if (sim.phase !== 'orbit1') { placeMarkers(); syncVisibility(); }
     paintLive(true);
 
+    // start on a good default: level 1 shows the TV satellite trip on a loop; level 2 starts the story
+    if (lvl() === 1) {
+      if (!destKey() && sim.phase === 'orbit1') goRoute('earth', 'leo-geo');
+      if (sim.phase === 'orbit1') { setPlaying(true); runForMe(); }
+    } else if (lvl() === 2) {
+      storyW.go(0);
+    }
+
+    // ----- hover and tap cards on the 3D objects (screen-space picking; the camera never moves) -----
+    const canvas = stage.renderer && stage.renderer.domElement;
+    const tmpV = new THREE.Vector3();
+    const worldOf = (p) => new THREE.Vector3(p[0] / k, 0, -p[1] / k);
+    function screenOf(v) {
+      const r = canvas.getBoundingClientRect();
+      tmpV.copy(v).project(stage.camera);
+      return { x: r.left + ((tmpV.x + 1) / 2) * r.width, y: r.top + ((1 - tmpV.y) / 2) * r.height, behind: tmpV.z > 1 };
+    }
+    function segDist(px, py, ax, ay, bx, by) {
+      const dx = bx - ax; const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    }
+    function pathDist(pointsWorld, x, y) {
+      let best = Infinity; let prev = null;
+      for (const v of pointsWorld) {
+        const s = screenOf(v);
+        if (prev && !s.behind && !prev.behind) best = Math.min(best, segDist(x, y, prev.x, prev.y, s.x, s.y));
+        prev = s;
+      }
+      return best;
+    }
+    const circleWorld = (r) => {
+      const out = [];
+      for (let i = 0; i <= 96; i++) out.push(worldOf(disp(pol((i / 96) * TWO_PI, r))));
+      return out;
+    };
+    function transferWorld() {
+      const nu0 = g.up ? 0 : Math.PI;
+      const pts = samplePath(g.mu, g.el0, 80, { fromNu: nu0, toNu: nu0 + Math.PI });
+      tfGroup.updateMatrixWorld(true);
+      return dispAll(pts).map((p) => tfGroup.localToWorld(worldOf(p)));
+    }
+    function hit(x, y) {
+      if (!canvas || !g) return null;
+      const coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+      const near = coarse ? 30 : 16;
+      const pv = posVel();
+      const craftAt = worldOf(disp(pv.r));
+      const cs = screenOf(craftAt);
+      if (Math.hypot(x - cs.x, y - cs.y) <= near + 6) return 'craft';
+      for (const [m, id] of [[marker1, 'push1'], [marker2, 'push2']]) {
+        if (!m || !m.object.visible) continue;
+        const ms = screenOf(m.object.position);
+        if (Math.hypot(x - ms.x, y - ms.y) <= near + 4) return id;
+      }
+      if (flash && flashArrow.object.visible) {
+        const fs = screenOf(flashArrow.object.position);
+        if (Math.hypot(x - fs.x, y - fs.y) <= near + 14) return 'flame';
+      }
+      if (getT().showArrow && lvl() >= 5 && speedArrow.object.visible) {
+        const tip = craftAt.clone().add(new THREE.Vector3(pv.v[0], 0, -pv.v[1]).normalize().multiplyScalar(9));
+        const ts = screenOf(tip);
+        if (segDist(x, y, cs.x, cs.y, ts.x, ts.y) <= near * 0.7) return 'speedArrow';
+      }
+      let bestId = null; let best = near;
+      const lowId = g.up ? 'lowOrbit' : 'highOrbit';
+      const highId = g.up ? 'highOrbit' : 'lowOrbit';
+      const cands = [];
+      if (startPath.object.visible) cands.push(['start', lowId, null]);
+      if (targetDash.object.visible || targetSolid.object.visible) cands.push(['target', highId, null]);
+      if (!g.same && (previewPath.object.visible || livePath.object.visible || fullPath.object.visible)) cands.push(['transfer', 'transferPath', null]);
+      for (const [kind, id] of cands) {
+        const pts = kind === 'start' ? circleWorld(g.r1) : kind === 'target' ? circleWorld(g.r2) : transferWorld();
+        const d = pathDist(pts, x, y);
+        if (d < best || (d === best && kind === 'transfer')) { best = d; bestId = id; }
+      }
+      if (bestId) return bestId;
+      if (bodyObj && stage.pick(x, y, [bodyObj.group])) return g.body.id;
+      return null;
+    }
+    function extraFor(id) {
+      if (lvl() < 4 || !g) return undefined;
+      const b = g.body;
+      const pv = posVel();
+      const height = (r) => (b.id === 'sun' ? `${nice(r / 1e6, 3)} million km` : dual.km(r - b.radius).text);
+      if (id === 'craft') return [{ label: 'Height', value: height(pv.rMag) }, { label: 'Speed now', value: dual.kmps(pv.speed, 2).text }];
+      if (id === 'push1') return [{ label: 'Speed change', value: dual.kmps(g.dv1, 2).text }];
+      if (id === 'push2') return [{ label: 'Speed change', value: dual.kmps(g.dv2, 2).text }];
+      if (id === 'transferPath') return [{ label: 'Trip time', value: friendlyDuration(g.tCoast) }];
+      if (id === 'lowOrbit') return [{ label: 'Height', value: height(g.up ? g.r1 : g.r2) }];
+      if (id === 'highOrbit') return [{ label: 'Height', value: height(g.up ? g.r2 : g.r1) }];
+      return undefined;
+    }
+    if (canvas) {
+      const onMove = (e) => {
+        if (e.pointerType === 'touch' || e.buttons) return;
+        const id = hit(e.clientX, e.clientY);
+        if (id) { card.show(id, { x: e.clientX, y: e.clientY, extra: extraFor(id) }); canvas.style.cursor = 'pointer'; }
+        else { card.hideHover(); canvas.style.cursor = ''; }
+      };
+      const onLeave = () => { card.hideHover(); canvas.style.cursor = ''; };
+      canvas.addEventListener('pointermove', onMove);
+      canvas.addEventListener('pointerleave', onLeave);
+      cleanup.push(() => { canvas.removeEventListener('pointermove', onMove); canvas.removeEventListener('pointerleave', onLeave); canvas.style.cursor = ''; });
+      cleanup.push(stage.onTap((e) => {
+        const id = hit(e.clientX, e.clientY);
+        if (id) card.show(id, { pinned: true, x: e.clientX, y: e.clientY, extra: extraFor(id) });
+      }));
+    }
+
     dbg = {
       burn1: null,
       burn2: null,
@@ -912,6 +1151,7 @@ export default {
       windowOpen: () => windowOpen(),
       setS: (s) => { sim.s = s; },
       posVel: () => posVel(),
+      hit: (x, y) => hit(x, y),
     };
 
     cleanup.push(stage.onFrame((dt) => update(dt)));

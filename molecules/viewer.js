@@ -676,10 +676,13 @@ export function createViewer(stage, opts = {}) {
         rim.frustumCulled = false;
         gRims.add(rim);
       }
-      meshes.set(op, { mesh, rim, i: 0 });
+      const bondOf = [];                  // instance -> index in structure.bonds (picking, viewer.onHover / onTapInfo)
+      mesh.userData.bondOf = bondOf;
+      meshes.set(op, { mesh, rim, i: 0, bondOf });
       gBonds.add(mesh);
     }
     const off = new THREE.Vector3();
+    let curBond = -1;
     const emit = (rec, ax, ay, az, bx, by, bz, rad, col) => {
       const dx = bx - ax; const dy = by - ay; const dz = bz - az;
       const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -692,6 +695,7 @@ export function createViewer(stage, opts = {}) {
         rec.rim.setMatrixAt(rec.i, tmpM);
       }
       if (col) rec.mesh.setColorAt(rec.i, col);
+      rec.bondOf[rec.i] = curBond;
       rec.i++;
     };
     // a cylinder from A to B shifted by `o` along `off`; in sticks style it is split into two colored halves
@@ -709,6 +713,7 @@ export function createViewer(stage, opts = {}) {
     for (let j = 0; j < nb; j++) {
       const b = bonds[j];
       if (!visible[b.a] || !visible[b.b]) continue;
+      curBond = j;
       const rec = meshes.get(Math.min(opacityOf(b.a), opacityOf(b.b)));
       const pa = atomPos[b.a];
       const pb = atomPos[b.b];
@@ -1080,6 +1085,9 @@ export function createViewer(stage, opts = {}) {
     requestRender();
   }
 
+  // ---------- tap mode ('measure' = tap atoms to measure, today's behavior; 'info' = taps call onTapInfo listeners) ----------
+  let tapMode = 'measure';
+
   // ---------- measure ----------
   function measureResult() {
     const idx = ms.indices.slice();
@@ -1177,6 +1185,7 @@ export function createViewer(stage, opts = {}) {
 
   const measure = {
     add(index) {
+      if (tapMode === 'info') return measureResult();   // taps only show information in this mode
       if (!state.structure || !(index >= 0 && index < atomPos.length)) return measureResult();
       if (ms.indices.length >= 3) ms.indices = [];
       if (ms.indices[ms.indices.length - 1] !== index) ms.indices.push(index);
@@ -1305,6 +1314,106 @@ export function createViewer(stage, opts = {}) {
     return best >= 0 ? { index: best, atom: state.structure.atoms[best] } : null;
   }
 
+  // ---------- information picking (viewer.onHover / onTapInfo) ----------
+  const HOVER_BOND_PX = 9;
+  function nearSegment(clientX, clientY, pairs, tol) {
+    const r = rayRect();
+    if (!r || !r.width) return -1;
+    let best = -1; let bd = tol;
+    for (let k = 0; k < pairs.length; k++) {
+      const [a, b] = pairs[k];
+      if (!visible[a] || !visible[b]) continue;
+      const sa = screenOf(a); const sb = screenOf(b);
+      if (!sa || !sb) continue;
+      const dx = sb.x - sa.x; const dy = sb.y - sa.y;
+      const L2 = dx * dx + dy * dy;
+      const t = L2 < 1e-6 ? 0 : clamp(((clientX - sa.x) * dx + (clientY - sa.y) * dy) / L2, 0, 1);
+      const d = Math.hypot(sa.x + t * dx - clientX, sa.y + t * dy - clientY);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
+  /**
+   * What is under this screen point: { kind:'atom'|'bond'|null, index, element, a, b, hbond, order, elementA, elementB, clientX, clientY }.
+   * Atoms win over bonds; hydrogen bonds are kind 'bond' with hbond: true. Never moves the camera.
+   */
+  function pickInfo(clientX, clientY) {
+    const out = { kind: null, index: -1, element: null, a: -1, b: -1, hbond: false, order: null, elementA: null, elementB: null, clientX, clientY };
+    const st = state.structure;
+    if (!st || !stage.renderer) return out;
+    const atomOut = (index) => { out.kind = 'atom'; out.index = index; out.element = st.atoms[index].el; return out; };
+    const bondOut = (i, hb) => {
+      const list = hb ? st.hbonds : st.bonds;
+      const bd = list[i];
+      out.kind = 'bond'; out.index = i; out.a = bd.a; out.b = bd.b; out.hbond = !!hb; out.order = hb ? null : (bd.order || 1);
+      out.elementA = st.atoms[bd.a].el; out.elementB = st.atoms[bd.b].el;
+      return out;
+    };
+    const hit = stage.pick(clientX, clientY, [...atomMeshes, ...gBonds.children]);
+    if (hit && hit.instanceId != null) {
+      const ind = hit.object.userData.indices;
+      if (ind) return atomOut(ind[hit.instanceId]);
+      const bo = hit.object.userData.bondOf;
+      if (bo && bo[hit.instanceId] >= 0) return bondOut(bo[hit.instanceId], false);
+    }
+    const near = pickAtom(clientX, clientY);
+    if (near) return atomOut(near.index);
+    if (Array.isArray(st.bonds) && st.bonds.length && state.style !== 'space-fill') {
+      const k = nearSegment(clientX, clientY, st.bonds.map((bd) => [bd.a, bd.b]), HOVER_BOND_PX);
+      if (k >= 0) return bondOut(k, false);
+    }
+    if (Array.isArray(st.hbonds) && st.hbonds.length) {
+      const k = nearSegment(clientX, clientY, st.hbonds.map((h) => [h.a, h.b]), HOVER_BOND_PX);
+      if (k >= 0) return bondOut(k, true);
+    }
+    return out;
+  }
+
+  const hoverSubs = new Set();
+  const tapInfoSubs = new Set();
+  const fire = (set, payload) => { for (const fn of Array.from(set)) { try { fn(payload); } catch (e) { console.error(e); } } };
+  const offInfoTap = stage.onTap(({ clientX, clientY }) => {
+    if (tapMode !== 'info' || !tapInfoSubs.size) return;
+    fire(tapInfoSubs, pickInfo(clientX, clientY));
+  });
+  disposers.push(offInfoTap);
+  // hover: mouse or pen only (pointer: fine); one pick per animation frame; a null payload when the pointer leaves or drags
+  {
+    const canvas = stage.renderer && stage.renderer.domElement;
+    let raf = 0; let ev = null; let wasOver = false;
+    const nullPayload = (e) => ({ kind: null, index: -1, element: null, a: -1, b: -1, hbond: false, order: null, elementA: null, elementB: null, clientX: e ? e.clientX : 0, clientY: e ? e.clientY : 0 });
+    const run = () => {
+      raf = 0;
+      if (!ev || disposed) return;
+      const e = ev; ev = null;
+      const p = e.buttons ? nullPayload(e) : pickInfo(e.clientX, e.clientY);
+      if (p.kind || wasOver) fire(hoverSubs, p);
+      wasOver = !!p.kind;
+    };
+    const onMove = (e) => {
+      if (!hoverSubs.size || (e.pointerType !== 'mouse' && e.pointerType !== 'pen')) return;
+      ev = e;
+      if (!raf) raf = requestAnimationFrame(run);
+    };
+    const onLeave = (e) => {
+      ev = null;
+      if (wasOver) { wasOver = false; fire(hoverSubs, nullPayload(e)); }
+    };
+    if (canvas) {
+      canvas.addEventListener('pointermove', onMove);
+      canvas.addEventListener('pointerleave', onLeave);
+      canvas.addEventListener('pointerdown', onLeave);
+      disposers.push(() => {
+        canvas.removeEventListener('pointermove', onMove);
+        canvas.removeEventListener('pointerleave', onLeave);
+        canvas.removeEventListener('pointerdown', onLeave);
+        if (raf) cancelAnimationFrame(raf);
+        hoverSubs.clear(); tapInfoSubs.clear();
+      });
+    }
+  }
+
   function frame(o = {}) {
     if (!state.structure || !stage.supported) return;
     const h = frameRadius / Math.sqrt(3);
@@ -1380,6 +1489,14 @@ export function createViewer(stage, opts = {}) {
     highlight,
     clearHighlight,
     pickAtom,
+    pickInfo,
+    /** fn(payload) while the mouse moves over atoms and bonds (mouse or pen only). Returns unsubscribe. */
+    onHover(fn) { hoverSubs.add(fn); return () => hoverSubs.delete(fn); },
+    /** fn(payload) on a tap or click when the tap mode is 'info'. Returns unsubscribe. */
+    onTapInfo(fn) { tapInfoSubs.add(fn); return () => tapInfoSubs.delete(fn); },
+    /** 'measure' (default: tap atoms to measure) or 'info' (taps call onTapInfo listeners; measure.add is ignored). */
+    setTapMode(m) { tapMode = m === 'info' ? 'info' : 'measure'; },
+    get tapMode() { return tapMode; },
     measure,
     frame,
     setSpin,

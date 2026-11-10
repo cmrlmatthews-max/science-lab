@@ -1,9 +1,13 @@
 // orbital/main.js  store, mode switching and panel tabs for Orbital Mechanics.
 // Each mode default-exports { id, label, panelTitles, mount(ctx), unmount() }.
-// ctx = { stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow() }
+// ctx = { stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow(),
+//         layers (shared/layers.js controller), card (shared/card.js), setPanelMin(panel, min) }
+// The store holds `level` (1–5, always 1 on page load). The layer bar is always on screen.
 
 import { createStage } from '../shared/scene.js';
 import { tabs } from '../shared/ui.js';
+import { createLayers, mountBar } from '../shared/layers.js';
+import { createCard } from '../shared/card.js';
 import { setupSpaceLighting, configureSpaceRenderer } from './space.js';
 import launch from './mode-launch.js';
 import orbits from './mode-orbits.js';
@@ -34,6 +38,7 @@ export function createStore(initialState) {
 
 export const store = createStore({
   mode: 'launch',
+  level: 1,                              // information layer 1–5 (not saved; every visit starts at 1)
   bodyId: 'earth',
   time: { playing: true, warp: 1 },      // warp is a multiplier chosen by the mode's time control
   launch: { alt: 400, speed: 7.67, angleDeg: 0 },
@@ -52,6 +57,11 @@ const panelC = document.getElementById('panel-c');
 const summaryEl = document.getElementById('summary');
 const titleEls = { a: document.getElementById('title-a'), b: document.getElementById('title-b'), c: document.getElementById('title-c') };
 const wraps = Array.from(document.querySelectorAll('.panel-wrap'));
+const appEl = document.querySelector('.app');
+const shellEl = document.querySelector('.shell');
+const headerEl = document.querySelector('.app-header');
+const stageWrap = document.querySelector('.stage-wrap');
+document.body.classList.add('sl-layers');
 
 let current = null;
 let stage = null;
@@ -77,6 +87,34 @@ const panelTabs = tabs({
 });
 document.getElementById('sheet').prepend(panelTabs.el);
 panelTabs.el.classList.add('sheet-tabs');
+
+// ----- information layers: bar, card, hidden panels -----
+const layers = createLayers({ get: () => store.get().level, set: (n) => store.set({ level: n }) });
+store.subscribe(() => layers.sync());
+mountBar(layers, { header: headerEl, shell: shellEl, summary: summaryEl });
+const card = createCard(stageWrap, { getInfo: () => null, layers, topEl: layers.bar() });
+const panelMin = { b: 1, c: 1 };
+
+function applyPanels() {
+  const lv = layers.level();
+  appEl.dataset.level = String(lv);
+  for (const p of ['b', 'c']) {
+    const off = lv < panelMin[p];
+    wraps.forEach((w) => { if (w.dataset.panel === p) w.hidden = off; });
+    const tabBtn = panelTabs.el.querySelector(`[data-value="${p}"]`);
+    if (tabBtn) tabBtn.hidden = off;
+    shellEl.classList.toggle(`sl-no-${p}`, off);
+    if (off && activePanel === p) showPanel('a');
+  }
+}
+/** Hide panel 'b' or 'c' (and its phone tab) below level `min`; the 3D view uses the space on wide screens. */
+function setPanelMin(panel, min) {
+  if (panel !== 'b' && panel !== 'c') return;
+  panelMin[panel] = Math.max(1, Math.min(5, Math.round(min) || 1));
+  applyPanels();
+}
+layers.watch(() => { applyPanels(); card.refresh(); });
+
 
 function showPanel(which) {
   activePanel = which;
@@ -106,6 +144,10 @@ function switchMode(id) {
   if (current) {
     try { current.unmount(); } catch (e) { console.error(e); }
   }
+  layers.reset();          // forget the old mode's gates and listeners
+  card.hide();
+  card.setSource(() => null);
+  panelMin.b = 1; panelMin.c = 1;
   if (stage) { stage.dispose(); stage = null; }
   clearPanels();
   current = mode;
@@ -118,11 +160,12 @@ function switchMode(id) {
   panelTabs.setLabels([{ value: 'a', label: t.a }, { value: 'b', label: t.b }, { value: 'c', label: t.c }]);
   document.title = `${mode.label} · Orbital Mechanics`;
   showPanel('a');
+  applyPanels();
   stage = createStage(stageEl);
   // Space look: ACES tone mapping, black clear, one strong sun and almost no ambient.
   if (stage.renderer) { configureSpaceRenderer(stage); setupSpaceLighting(stage); }
   try {
-    mode.mount({ stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow: () => narrowMq.matches });
+    mode.mount({ stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow: () => narrowMq.matches, layers, card, setPanelMin });
   } catch (e) {
     showError(e);
   }

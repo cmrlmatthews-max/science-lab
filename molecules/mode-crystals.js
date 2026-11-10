@@ -1,113 +1,43 @@
 // molecules/mode-crystals.js  Crystals mode ("How are the atoms stacked inside a solid?").
-// Simple-first pattern (shared/simple.js): one question, three controls, one plain answer, "Try this" steps,
-// and a "Show numbers" switch that hides the technical tiles until asked.
-// Mode default export: { id, label, panelTitles, mount(ctx), unmount() }.
+// Five information layers (shared/layers.js):
+//   1 Start    the question, one plain answer, up to four picture choices, a slowly turning block of table salt. No digits.
+//   2 Story    a guided story of six steps, each one sets the 3D view, with an "In your life" line.
+//   3 Explore  the full crystal list, block size, the repeating block, the sliding layer, neighbors, "Try this". Tap or point at atoms for cards.
+//   4 Numbers  stat tiles (touching neighbors, repeating block, how full the space is, density) with comparisons and trust tags.
+//   5 Deep     stats, cell constants, Miller planes, a Measure tool, sources, switches.
+// All words live in content-crystals.js. Mode default export: { id, label, panelTitles, mount(ctx), unmount() }.
 //
-// State lives in store.crystals { id, amount, nx, ny, nz, showCell, plane, showBonds, showBoundary, showNumbers }
+// State lives in store.crystals { id, amount, nx, ny, nz, showCell, plane, showBonds, showBoundary }
 // and store.view { style, labels, spin }, so it survives a switch to another mode and back.
-// Numbers under "Show numbers" are computed live from lattice.js and crystal-data.js.
+// The level lives in store.level (shell). Numbers are computed live from lattice.js and crystal-data.js.
 
 import { createViewer, viewControls } from './viewer.js';
 import { el, toggle, slider, segmented, select, stat, stats, legend, section, sourceTag, button, row } from '../shared/ui.js';
-import { question, answer, tryThis, numbersSwitch, note } from '../shared/simple.js';
+import { question, answer, tryThis, note } from '../shared/simple.js';
+import { story, tile, moreLink } from '../shared/layers.js';
+import { infoChip, infoButton } from '../shared/card.js';
+import { dual, nice } from '../shared/units.js';
 import { CRYSTALS, CRYSTAL_ORDER, CRYSTAL_GROUPS } from './crystal-data.js';
 import { ELEMENTS } from './elements.js';
 import {
   buildBlock, cellVectors, planePolygon, neighbors, coordination, density, atomsPerCell, packingFraction,
 } from './lattice.js';
+import { TEXT, getInfo, elementId } from './content-crystals.js';
 
-// ---------- plain words, one entry per crystal ----------
-// name: plain name. tag: one plain line in the picker. shape: short picture for the one-line summary.
-// text: one or two plain sentences for the answer. why: facts to show (index into crystal.facts, or a plain string).
-const PLAIN = {
-  fe_bcc: {
-    name: 'Iron at room temperature', tag: 'Structural steel at room temperature', shape: 'cube with a center atom',
-    text: 'Iron atoms sit at the corners of a cube with one more in the middle. This open stacking makes room-temperature steel strong but less easy to bend than copper.',
-    why: ['Steel is mostly iron. At room temperature the atoms sit in this cube-with-a-center pattern.', 'The gaps between the atoms are small, so very little carbon can hide inside.', 'Heating steel changes the stacking, and that is the basis of heat treatment.'],
-  },
-  fe_fcc: {
-    name: 'Iron when it is red hot', tag: 'Steel when it is red hot', shape: 'cube with face atoms',
-    text: 'When iron gets very hot the atoms rearrange. Now one atom sits at each corner and one on every face, so there is more room between the atoms for carbon.',
-    why: ['The gaps between the atoms are bigger here, so much more carbon can dissolve in the iron.', 3],
-  },
-  al_fcc: {
-    name: 'Aluminum', tag: 'Window frames and cladding', shape: 'cube with face atoms',
-    text: 'Aluminum atoms sit at each corner and on each face of a cube. Layers of atoms slide past each other easily, so aluminum is soft and easy to shape.',
-    why: [2, 'Aluminum is soft, so it can be pushed through a die into long window frame shapes.'],
-  },
-  cu_fcc: {
-    name: 'Copper', tag: 'Wiring and roofing', shape: 'cube with face atoms',
-    text: 'Copper atoms sit at each corner and on each face of a cube, packed as tightly as equal balls can be. Layers slide easily, so copper can be drawn into wire.',
-    why: ['Layers of atoms slide easily, so copper can be drawn into thin wire and rolled into sheet.', 2, 3],
-  },
-  zn_hcp: {
-    name: 'Zinc', tag: 'The coating on galvanized steel', shape: 'stacked flat layers',
-    text: 'Zinc atoms form flat layers, and each layer rests in the dips of the one below. The layers sit a little farther apart than in an ideal stack.',
-    why: [1],
-  },
-  ti_hcp: {
-    name: 'Titanium', tag: 'Light, strong cladding and roofing', shape: 'stacked flat layers',
-    text: 'Titanium atoms form tight flat layers, and each layer rests in the dips of the one below, like oranges in a crate.',
-    why: [1],
-  },
-  mg_hcp: {
-    name: 'Magnesium', tag: 'The lightest common metal', shape: 'stacked flat layers',
-    text: 'Magnesium atoms form tight flat layers, and each layer rests in the dips of the one below, like oranges in a crate.',
-    why: [1],
-  },
-  nacl: {
-    name: 'Table salt', tag: 'Road salt', shape: 'checkerboard of two kinds of atoms',
-    text: 'Sodium and chlorine alternate in every direction, like a checkerboard in three dimensions. Opposite charges hold them together, so the crystal is hard but brittle.',
-    why: [1, 2, 3],
-  },
-  cscl: {
-    name: 'Cesium chloride', tag: 'A salt that stacks differently', shape: 'cube with a different atom in the middle',
-    text: 'A big cesium atom sits in the middle of a cube of chlorine atoms. More neighbors fit around it than in table salt.',
-    why: [1, 2],
-  },
-  diamond: {
-    name: 'Diamond', tag: 'The hardest natural material', shape: 'linked four-sided pyramids',
-    text: 'Every carbon atom holds four others, pointing to the corners of a small pyramid. Strong bonds in every direction make diamond the hardest natural material.',
-    why: [1, 2],
-  },
-  silicon: {
-    name: 'Silicon', tag: 'Solar cells and chips', shape: 'linked four-sided pyramids',
-    text: 'Silicon is stacked the same way as diamond. Every atom holds four others. Thin slices of this crystal are the base of solar cells and chips.',
-    why: [1, 2],
-  },
-  graphite: {
-    name: 'Graphite', tag: 'Pencil lead. Slippery layers.', shape: 'flat sheets',
-    text: 'Carbon atoms form flat sheets of six-sided rings. The bonds inside a sheet are strong, but the sheets are held weakly, so they slide. That is why a pencil writes.',
-    why: [1, 2, 3],
-  },
-  ice_ih: {
-    name: 'Ice', tag: 'Frozen water', shape: 'open rings of six',
-    text: 'Water molecules link into open rings of six, like a cage. The empty space makes ice lighter than water, so ice floats and water expands when it freezes.',
-    why: [1, 2],
-  },
-  quartz: {
-    name: 'Quartz', tag: 'Sand. The ordered form of glass.', shape: 'spirals of linked pyramids',
-    text: 'Each silicon atom sits in a small pyramid of four oxygen atoms, and neighboring pyramids share corners in a spiral. Quartz is what sand is made of.',
-    why: [1, 2, 3],
-  },
-  calcite: {
-    name: 'Calcite', tag: 'Limestone and marble', shape: 'flat triangles and calcium layers',
-    text: 'Each carbon atom sits in a flat triangle of three oxygen atoms, and these triangles alternate with calcium atoms in layers. This is the mineral of limestone and marble.',
-    why: [1, 2, 3],
-  },
-};
+const L3 = TEXT.l3;
+const L4 = TEXT.l4;
+const L5 = TEXT.l5;
 
 // Pure metals are drawn as bare metal by the viewer, so the legend uses the same display tints.
 const METAL_TINT = { Fe: '#a79f98', Al: '#dde1e6', Cu: '#e08a57', Zn: '#a7aec6', Ti: '#aeb2ba', Mg: '#b9c9b4' };
+const SHOW_AS = Object.entries(L3.showAs).map(([value, label]) => ({ value, label }));
+const HCP_IDS = ['zn_hcp', 'ti_hcp', 'mg_hcp'];
+const PATTERN_CARD = { fe_bcc: 'bcc', fe_fcc: 'fcc', al_fcc: 'fcc', cu_fcc: 'fcc', zn_hcp: 'hcp', ti_hcp: 'hcp', mg_hcp: 'hcp' };
 
-const AMOUNTS = ['One block', 'A few blocks', 'A chunk'];
-const MAX_ATOMS = 1500;
-const SHOW_AS = [
-  { value: 'ball-stick', label: 'Balls and sticks' },
-  { value: 'space-fill', label: 'Packed' },
-  { value: 'sticks', label: 'Sticks' },
-];
-const SHEET_PLAIN = 'Atoms slide along sheets like this';
+// The first time this mode opens at level 1 it shows table salt, slowly turning.
+let firstMount = true;
+
+// ---------- small pure helpers ----------
 
 // ---------- small pure helpers ----------
 
@@ -120,7 +50,7 @@ function blockCounts(crystal, amount) {
   return counts;
 }
 
-function plainOf(c) { return PLAIN[c.id] || { name: c.short || c.name, tag: '', shape: c.lattice, text: '', why: [] }; }
+function plainOf(c) { return L3.crystals[c.id] || { name: c.short || c.name, tag: '', shape: c.lattice, text: '' }; }
 
 /** First two neighbor shells for HCP metals, else the nearest shell counted from expect. */
 function neighborCount(c) {
@@ -130,33 +60,21 @@ function neighborCount(c) {
 
 function neighborLine(c) {
   const n = c.expect.coordination;
-  switch (c.id) {
-    case 'zn_hcp': case 'ti_hcp': case 'mg_hcp': return 'Each atom touches 12 neighbors, six of them a little closer.';
-    case 'ice_ih': return 'Each water molecule holds four others.';
-    case 'quartz': return 'Each silicon holds four oxygens.';
-    case 'calcite': return 'Each calcium holds six oxygens. Each carbon holds three.';
-    case 'graphite': return `Each carbon touches ${n} neighbors in its sheet.`;
-    case 'nacl': case 'cscl': return `Each atom touches ${n} neighbors of the other kind.`;
-    default: return `Each atom touches ${n} neighbors.`;
-  }
+  const N = L3.neighborLines;
+  if (HCP_IDS.includes(c.id)) return N.hcp;
+  if (N[c.id] && typeof N[c.id] === 'string') return N[c.id];
+  if (c.id === 'nacl' || c.id === 'cscl') return N.otherKind(n);
+  return N.generic(n);
 }
 
 function neighborShort(c) {
-  if (c.id === 'ice_ih') return '4 neighbors';
-  if (c.id === 'quartz') return '4 neighbors';
-  if (c.id === 'calcite') return '6 neighbors';
   return `${neighborCount(c)} neighbors`;
 }
 
 function whyList(c) {
-  const p = plainOf(c);
-  const out = [];
-  for (const w of p.why) {
-    const t = typeof w === 'number' ? c.facts[w] : w;
-    if (t && out.length < 3) out.push(t);
-  }
-  return out;
+  return c.facts.slice(0, 3);
 }
+
 
 const NB_CACHE = new Map();
 /** Neighbor rule for a basis atom: cutoff distance, the only element counted (or null), and the full count in bulk. */
@@ -257,7 +175,7 @@ const CSS = `
 .xt-pick-head[aria-expanded="true"] .xt-pick-chev { transform: rotate(180deg); }
 .xt-list { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-2); padding: 4px; }
 .xt-list[hidden] { display: none; }
-.xt-group { margin: 8px 6px 2px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
+.xt-group { margin: 8px 6px 2px; font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
 .xt-group:first-child { margin-top: 4px; }
 .xt-row { width: 100%; min-height: 44px; display: flex; flex-direction: column; justify-content: center; gap: 0; text-align: left; padding: 5px 10px; border: 1px solid transparent; border-radius: var(--radius); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
 .xt-row:hover { background: var(--paper-3); }
@@ -265,10 +183,16 @@ const CSS = `
 .xt-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .xt-row-name { font-size: 14.5px; font-weight: 600; }
 .xt-row-tag { font-size: 12.5px; color: var(--ink-2); }
+.xt-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.xt-choice { min-height: 60px; padding: 10px 12px; display: flex; align-items: center; justify-content: center; text-align: center; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
+.xt-choice:hover { border-color: var(--accent-edge); }
+.xt-choice[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.xt-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .xt-chip { display: inline-block; align-self: flex-start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line-strong); color: var(--ink-2); background: var(--paper-3); }
 .xt-why { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.45; }
 .xt-nb { display: flex; flex-direction: column; gap: 8px; }
-.xt-nb-line { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 500; }
+.xt-nb-top { display: flex; align-items: flex-start; gap: 8px; }
+.xt-nb-line { margin: 0; flex: 1 1 auto; font-size: 15px; line-height: 1.4; font-weight: 500; }
 .xt-nb-status { margin: 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
 .xt-small { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
 .xt-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
@@ -277,6 +201,14 @@ const CSS = `
 .xt-showas .seg-btn { white-space: normal; line-height: 1.15; padding: 4px; font-size: 13px; }
 .xt-showas .seg-btn:first-child { flex: 1.5 1 0; }
 .xt-body { display: flex; flex-direction: column; gap: 14px; }
+.xt-tog { display: flex; align-items: center; gap: 8px; }
+.xt-tog > .toggle { flex: 1 1 auto; min-width: 0; }
+.xt-chips { display: flex; flex-wrap: wrap; gap: 8px 6px; }
+.xt-gloss { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12.5px; line-height: 1.4; }
+.xt-gloss dt { font-weight: 600; color: var(--ink); }
+.xt-gloss dd { margin: 0; color: var(--ink-2); }
+.xt-trust { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.xt-aboutrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
 `;
 
 export default {
@@ -286,9 +218,14 @@ export default {
   _cleanup: [],
 
   mount(ctx) {
-    const { stage, panelA, panelB, panelC, summaryEl, store } = ctx;
+    const { stage, panelA, panelB, panelC, summaryEl, store, layers, card, setPanelMin } = ctx;
     const cleanup = this._cleanup;
     let dead = false;
+
+    // Panels B and C hold the explore, numbers and deep content; at levels 1 and 2 the 3D view is the hero.
+    setPanelMin('b', 3);
+    setPanelMin('c', 3);
+    card.setSource(getInfo);
 
     const styleEl = document.createElement('style');
     styleEl.id = 'crystals-style';
@@ -298,15 +235,22 @@ export default {
 
     const viewer = createViewer(stage);
     cleanup.push(() => { dead = true; viewer.dispose(); });
+    viewer.setTapMode('info');
 
     // ---------- state ----------
     const cur = () => store.get().crystals;
     const crystalOf = () => CRYSTALS[cur().id] || CRYSTALS.fe_bcc;
     const setCr = (patch) => store.set({ crystals: { ...cur(), ...patch } });
     const setView = (patch) => store.set({ view: { ...store.get().view, ...patch } });
+    const lvl = () => layers.level();
 
     (function ensureState() {
-      const s = cur();
+      let s = cur();
+      let startSpin = false;
+      if (firstMount) {
+        firstMount = false;
+        if (lvl() === 1) { s = { ...s, id: 'nacl', amount: 1, plane: null, showCell: true }; startSpin = true; }
+      }
       const c = CRYSTALS[s.id] || CRYSTALS.fe_bcc;
       const amount = s.amount != null ? s.amount : Math.max(0, Math.min(2, (s.nx || 2) - 1));
       const counts = blockCounts(c, amount);
@@ -314,10 +258,11 @@ export default {
         crystals: {
           showCell: true, showBonds: true, plane: null, ...s,
           id: c.id, amount, nx: counts[0], ny: counts[1], nz: counts[2],
-          showBoundary: s.showBoundary !== false, showNumbers: !!s.showNumbers, spin: !!s.spin,
+          showBoundary: s.showBoundary !== false, spin: startSpin || !!s.spin,
         },
       });
-      // Blocks are easier to read when still: spin is off here unless the user turned it on in this mode.
+      // Blocks are easier to read when still, so spin stays off in the deeper levels unless the user turned it on.
+      // At the start the table salt block turns slowly.
       if (!!store.get().view.spin !== !!store.get().crystals.spin) store.set({ view: { ...store.get().view, spin: !!store.get().crystals.spin } });
     }());
 
@@ -326,6 +271,7 @@ export default {
     let nb = { on: false, center: -1, list: [] };
     let lastStyle = null;
     let planeFor = '';
+    let measureOn = false;
 
     function ensureBuilt() {
       const s = cur();
@@ -363,11 +309,9 @@ export default {
       viewer.setCell(s.showCell ? structure.unitCell : null);
       drawPlanes();
       if (nb.on) viewer.highlight([nb.center, ...nb.list]); else viewer.clearHighlight();
-      if (rebuilt) { measureStat.update({ value: 'None', unit: '', hint: MEASURE_HINT }); }
-      packNote.textContent = style === 'space-fill' && c.group === 'ionic'
-        ? 'The two kinds of atom are drawn so that unlike neighbors just touch. Their real sizes differ from what is shown.'
-        : '';
-      packNote.style.display = packNote.textContent ? '' : 'none';
+      if (rebuilt) clearMeasureUi();
+      packNote.textContent = style === 'space-fill' && c.group === 'ionic' ? L3.notesPacked : '';
+      packNote.hidden = !packNote.textContent;
       if (reframe) viewer.frame();
     }
 
@@ -377,13 +321,13 @@ export default {
       const planes = c.planes || [];
       if (s.plane == null || !planes[s.plane]) { viewer.setPlanes([]); return; }
       const p = planes[s.plane];
-      const plain = c.id === 'graphite' ? 'One sheet' : SHEET_PLAIN;
-      const label = s.showNumbers ? p.label : plain;
+      const plain = c.id === 'graphite' ? L3.sheetOne : L3.sheetPlain;
+      const label = lvl() >= 5 ? p.label : plain;
       viewer.setPlanes(planeShapes(c, p, built.counts, label));
     }
 
-    // ---------- panel A: the question and three controls ----------
-    const pickerHead = el('button', { type: 'button', class: 'xt-pick-head', 'aria-expanded': 'false', 'aria-label': 'Material' },
+    // ---------- panel A: question, answer, choices, story, then the Explore controls ----------
+    const pickerHead = el('button', { type: 'button', class: 'xt-pick-head', 'aria-expanded': 'false', 'aria-label': L3.controls.crystal },
       el('span', { class: 'xt-pick-main' }, el('span', { class: 'xt-pick-name' }), el('span', { class: 'xt-pick-tag' })),
       el('span', { class: 'xt-pick-chev', 'aria-hidden': 'true', text: '▼' }));
     const pickerList = el('div', { class: 'xt-list', hidden: true, role: 'group', 'aria-label': 'Pick a material' });
@@ -391,7 +335,7 @@ export default {
     for (const g of Object.keys(CRYSTAL_GROUPS)) {
       const ids = CRYSTAL_ORDER.filter((id) => CRYSTALS[id] && CRYSTALS[id].group === g);
       if (!ids.length) continue;
-      pickerList.append(el('div', { class: 'xt-group', text: CRYSTAL_GROUPS[g] }));
+      pickerList.append(el('div', { class: 'xt-group', text: L3.groups[g] || CRYSTAL_GROUPS[g] }));
       for (const id of ids) {
         const p = plainOf(CRYSTALS[id]);
         const b = el('button', { type: 'button', class: 'xt-row', 'aria-pressed': 'false' },
@@ -412,15 +356,27 @@ export default {
       pickerHead.querySelector('.xt-pick-name').textContent = p.name;
       pickerHead.querySelector('.xt-pick-tag').textContent = p.tag;
       for (const [id, b] of Object.entries(rowBtns)) b.setAttribute('aria-pressed', id === cur().id ? 'true' : 'false');
+      for (const [id, b] of Object.entries(choiceBtns)) b.setAttribute('aria-pressed', id === cur().id ? 'true' : 'false');
+    }
+
+    // level 1 and 2: a few big choices
+    const choiceBtns = {};
+    const choices = el('div', { class: 'xt-choices', role: 'group', 'aria-label': 'Pick a material' });
+    for (const ch of TEXT.l1.choices) {
+      const b = el('button', { type: 'button', class: 'xt-choice', 'aria-pressed': 'false', text: ch.label });
+      b.dataset.id = ch.id;
+      b.addEventListener('click', () => chooseCrystal(ch.id, { amount: 1, style: 'ball-stick', plane: null }));
+      choiceBtns[ch.id] = b;
+      choices.append(b);
     }
 
     const amountSlider = slider({
-      label: 'How much to show', min: 0, max: 2, step: 1, value: cur().amount,
-      format: (v) => AMOUNTS[v],
+      label: L3.controls.amount, min: 0, max: 2, step: 1, value: cur().amount,
+      format: (v) => L3.amounts[v],
       onInput: (v) => setAmount(v),
     });
     const showAs = segmented({
-      label: 'Show as', options: SHOW_AS, value: store.get().view.style || 'ball-stick',
+      label: L3.controls.showAs, options: SHOW_AS, value: store.get().view.style || 'ball-stick',
       onChange: (v) => setView({ style: v }),
     });
 
@@ -436,137 +392,208 @@ export default {
       if (!c) return;
       const amount = opts.amount != null ? opts.amount : cur().amount;
       const counts = blockCounts(c, amount);
-      setCr({ id, amount, nx: counts[0], ny: counts[1], nz: counts[2], plane: opts.plane != null ? opts.plane : null });
+      const patch = { id, amount, nx: counts[0], ny: counts[1], nz: counts[2], plane: opts.plane != null ? opts.plane : null };
+      if (opts.cell != null) patch.showCell = opts.cell;
+      setCr(patch);
       if (opts.style && opts.style !== store.get().view.style) {
         // draw first with the new style, so the viewer does not refit on a stale structure
         draw(true, opts.style);
         store.set({ view: { ...store.get().view, style: opts.style } });
         paintAll();
       } else afterChange(true);
+      if (opts.neighbors) {
+        const idx = pickCenterAtom(c, built.structure);
+        if (idx >= 0) setNeighbors(idx);
+      }
     }
 
-    const steps = tryThis([
-      { label: 'Iron at room temperature', hint: 'One atom sits in the middle of each cube.', run: () => chooseCrystal('fe_bcc', { amount: 0, style: 'ball-stick' }) },
-      { label: 'Iron when it is red hot', hint: 'The atoms rearrange. Now one sits on each face.', run: () => chooseCrystal('fe_fcc', { amount: 0, style: 'ball-stick' }) },
-      { label: 'See how tightly it packs', hint: 'Each atom touches twelve others.', run: () => chooseCrystal('cu_fcc', { amount: 2, style: 'space-fill' }) },
-      { label: 'Why pencils write', hint: 'Strong sheets, weakly stacked. They slide.', run: () => chooseCrystal('graphite', { amount: 1, style: 'ball-stick', plane: 0 }) },
-    ]);
+    const TRY_RUN = [
+      () => chooseCrystal('fe_bcc', { amount: 0, style: 'ball-stick' }),
+      () => chooseCrystal('fe_fcc', { amount: 0, style: 'ball-stick' }),
+      () => chooseCrystal('cu_fcc', { amount: 2, style: 'space-fill' }),
+      () => chooseCrystal('graphite', { amount: 1, style: 'ball-stick', plane: 0 }),
+      () => chooseCrystal('nacl', { amount: 1, style: 'ball-stick', plane: 0 }),
+    ];
+    const tries = tryThis(L3.tries.map((t, i) => ({ ...t, run: TRY_RUN[i] })));
+
+    const STORY_RUN = [
+      () => chooseCrystal('nacl', { amount: 1, style: 'ball-stick', cell: false }),
+      () => chooseCrystal('quartz', { amount: 1, style: 'ball-stick', cell: true }),
+      () => chooseCrystal('nacl', { amount: 1, style: 'ball-stick', cell: true, plane: 0 }),
+      () => chooseCrystal('cu_fcc', { amount: 1, style: 'ball-stick', cell: true, plane: 0 }),
+      () => chooseCrystal('diamond', { amount: 1, style: 'ball-stick', cell: false, neighbors: true }),
+      () => chooseCrystal('ice_ih', { amount: 1, style: 'ball-stick', cell: false }),
+    ];
+    const storyW = story(TEXT.l2.steps.map((s, i) => ({ ...s, run: STORY_RUN[i] })), { title: 'The story', autoRun: true });
+
+    const ans = answer({ kind: 'info', title: '', text: '' });
+    const aboutHost = el('div', { class: 'xt-aboutrow' });
+    const ansBox = el('div', { class: 'xt-body', style: 'gap:8px' }, ans.el, layers.gate(aboutHost, 2), moreLink(layers));
+    const tapNote = layers.gate(note(L3.tapOff), 1, 2);
+    const pickBox = layers.gate(el('div', { class: 'xt-pick' }, pickerHead, pickerList), 3);
 
     panelA.append(
-      question('How are the atoms stacked inside a solid?', 'Pick a material. The same small block repeats over and over.'),
-      el('div', { class: 'xt-pick' }, pickerHead, pickerList),
-      amountSlider.el,
-      el('div', { class: 'xt-showas' }, showAs.el),
-      steps,
+      question(TEXT.l1.question, TEXT.l1.sub),
+      ansBox,
+      layers.gate(storyW.el, 2, 2),
+      layers.gate(choices, 1, 2),
+      tapNote,
+      pickBox,
+      layers.gate(amountSlider.el, 3),
+      layers.gate(el('div', { class: 'xt-showas' }, showAs.el), 3),
+      layers.gate(tries, 3),
     );
 
-    // ---------- panel B: what it is ----------
-    const ans = answer({ kind: 'info', title: '', text: '' });
-    const chipHost = el('div', {});
+    // ---------- panel B: explore, numbers, deep ----------
+    // level 4 tiles
+    const tNeighbors = tile({ label: L4.tiles.neighbors.label, us: '', compare: '', infoId: 'neighbors' });
+    const tBlock = tile({ label: L4.tiles.block.label, us: null, si: '', compare: '', infoId: 'cell' });
+    const tPack = tile({ label: L4.tiles.packing.label, us: '', compare: '', infoId: 'packing' });
+    const tDens = tile({ label: L4.tiles.density.label, us: '', si: '', compare: '', infoId: 'density' });
+    const tilesWrap = layers.gate(el('div', { class: 'sl-tiles' }, tNeighbors.el, tBlock.el, tPack.el, tDens.el), 4);
+    const srcRow = row(el('span', { class: 'muted', text: L4.dataLabel }));
+    const trustRow = layers.gate(el('div', { class: 'xt-trust' }, srcRow), 4);
+    const glossBox = layers.gate(section(L4.glossTitle, el('dl', { class: 'xt-gloss' },
+      ...Object.entries(L4.glosses).flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })]))), 4, 4);
+
+    // level 3 explore
     const nbLine = el('p', { class: 'xt-nb-line' });
     const nbStatus = el('p', { class: 'xt-nb-status' });
-    const nbBtn = button({ label: 'Show one atom\'s neighbors', onClick: () => {
+    const nbBtn = button({ label: L3.controls.neighbors, onClick: () => {
       if (nb.on) { nb = { on: false, center: -1, list: [] }; draw(false); paintNb(); return; }
       const idx = pickCenterAtom(crystalOf(), built.structure);
       if (idx >= 0) setNeighbors(idx);
     } });
-    const nbBox = el('div', { class: 'xt-nb' }, nbLine, nbBtn, nbStatus);
-    const whyHost = el('ul', { class: 'xt-why' });
-    const whyBox = section('Why it matters in a building', whyHost);
+    const nbBox = layers.gate(el('div', { class: 'xt-nb' },
+      el('div', { class: 'xt-nb-top' }, nbLine, infoButton(card, 'neighbors', { label: 'touching neighbors' })), nbBtn, nbStatus), 3);
 
-    const cellTog = toggle({ label: 'Show the repeating block', value: cur().showCell, onChange: (v) => { setCr({ showCell: v }); draw(false); } });
-    const planeTog = toggle({ label: 'Show the sliding layer', value: cur().plane != null, onChange: (v) => {
+    const cellTog = toggle({ label: L3.controls.cell, value: cur().showCell, onChange: (v) => { setCr({ showCell: v }); draw(false); } });
+    const planeTog = toggle({ label: L3.controls.plane, value: cur().plane != null, onChange: (v) => {
       setCr({ plane: v ? 0 : null });
       paintPlane();
       draw(false);
     } });
-    const planeHint = el('p', { class: 'xt-small', text: SHEET_PLAIN + '.' });
-    const toggles = el('div', { class: 'xt-body', style: 'gap:6px' }, cellTog.el, planeTog.el, planeHint);
-    const notesHost = el('div', { class: 'xt-body', style: 'gap:6px' });
+    const planeHint = el('p', { class: 'xt-small', text: L3.sheetPlain + '.' });
+    const planeRow = el('div', { class: 'xt-tog' }, planeTog.el, infoButton(card, 'plane', { label: 'plane' }));
+    const toggles = layers.gate(el('div', { class: 'xt-body', style: 'gap:6px' },
+      el('div', { class: 'xt-tog' }, cellTog.el, infoButton(card, 'cell', { label: 'repeating block' })), planeRow, planeHint), 3);
     const packNote = el('p', { class: 'xt-small' });
+    const iceNote = el('p', { class: 'xt-small', text: L3.iceNote });
+    const notes3 = layers.gate(el('div', { class: 'xt-body', style: 'gap:6px' }, packNote, iceNote), 3);
 
-    // numbers area
-    const tDensity = stat({ label: 'Density', value: 0, unit: 'g/cm³', digits: 3 });
-    const tNearest = stat({ label: 'Nearest neighbor distance', value: 0, unit: 'Å', digits: 3 });
-    const tTouch = stat({ label: 'Touching neighbors', value: 0, digits: 0 });
-    const tAtoms = stat({ label: 'Atoms in the repeating block', value: 0, digits: 0 });
-    const tDrawn = stat({ label: 'Atoms drawn', value: 0, digits: 0 });
-    const tPack = stat({ label: 'Space filled', value: 0, unit: '%', digits: 1 });
+    const ideaChips = el('div', { class: 'xt-chips' });
+    const ideasBox = layers.gate(section(L3.ideasTitle, ideaChips), 3);
+    const whyHost = el('ul', { class: 'xt-why' });
+    const whyBox = layers.gate(section(L4.whyTitle, whyHost), 4);
+
+    // level 5 deep
+    const tNearest = stat({ label: L5.nearest, value: 0, unit: 'Å', digits: 3 });
+    const tTouch = stat({ label: L5.touching, value: 0, digits: 0 });
+    const tAtoms = stat({ label: L5.atomsInBlock, value: 0, digits: 0 });
+    const tDrawn = stat({ label: L5.atomsDrawn, value: 0, digits: 0 });
     const kv = el('dl', { class: 'xt-kv' });
-    const planePick = select({ label: 'Plane', options: [{ value: 'none', label: 'None' }], value: 'none', onChange: (v) => {
+    const planePick = select({ label: L5.plane, options: [{ value: 'none', label: L5.planeNone }], value: 'none', onChange: (v) => {
       setCr({ plane: v === 'none' ? null : Number(v) });
       paintPlane();
       draw(false);
     } });
     const planeNote = el('p', { class: 'xt-small' });
-    const measureStat = stat({ label: 'Measurement', value: 'None', hint: '' });
-    const MEASURE_HINT = 'Tap two atoms to measure a distance. Tap a third for the angle.';
-    measureStat.update({ hint: MEASURE_HINT });
-    const clearBtn = button({ label: 'Clear', onClick: () => { viewer.measure.clear(); viewer.clearHighlight(); measureStat.update({ value: 'None', unit: '', hint: MEASURE_HINT }); if (nb.on) viewer.highlight([nb.center, ...nb.list]); } });
-    const boundTog = toggle({ label: 'Show shared corner atoms', value: cur().showBoundary, onChange: (v) => { setCr({ showBoundary: v }); draw(false); } });
-    const bondTog = toggle({ label: 'Show sticks between atoms', value: cur().showBonds, onChange: (v) => { setCr({ showBonds: v }); draw(false); } });
-    const labelTog = toggle({ label: 'Show element labels', value: !!store.get().view.labels, onChange: (v) => { viewer.setLabels(v); setView({ labels: v }); } });
-    const srcRow = row(el('span', { class: 'muted', text: 'Data' }));
+    const measureStat = stat({ label: L5.measureTitle, value: L5.measureNone, hint: L5.measureHint });
+    const clearBtn = button({ label: L5.clear, onClick: () => { viewer.measure.clear(); viewer.clearHighlight(); measureStat.update({ value: L5.measureNone, unit: '', hint: L5.measureHint }); if (nb.on) viewer.highlight([nb.center, ...nb.list]); } });
+    const measureBody = el('div', { class: 'xt-body', style: 'gap:8px' }, measureStat.el, row(clearBtn));
+    measureBody.hidden = true;
+    const measureTog = toggle({ label: L5.measureToggle, value: false, onChange: (v) => {
+      measureOn = v;
+      measureBody.hidden = !v;
+      if (!v) { clearMeasureUi(); if (!nb.on) viewer.clearHighlight(); }
+      applyTapMode();
+    } });
+    const boundTog = toggle({ label: L5.boundary, value: cur().showBoundary, onChange: (v) => { setCr({ showBoundary: v }); draw(false); } });
+    const bondTog = toggle({ label: L5.bonds, value: cur().showBonds, onChange: (v) => { setCr({ showBonds: v }); draw(false); } });
+    const labelTog = toggle({ label: L5.labels, value: !!store.get().view.labels, onChange: (v) => { viewer.setLabels(v); setView({ labels: v }); } });
+    const notesHost = el('div', { class: 'xt-body', style: 'gap:6px' });
+    const deep = layers.gate(el('div', { class: 'xt-body' },
+      stats(tNearest.el, tTouch.el, tAtoms.el, tDrawn.el),
+      el('div', { class: 'xt-body', style: 'gap:6px' }, kv, el('div', { class: 'xt-chips' }, infoChip(card, 'lattice_constant', 'cell edges'))),
+      el('div', { class: 'xt-body', style: 'gap:6px' }, planePick.el, planeNote, el('div', { class: 'xt-chips' }, infoChip(card, 'miller', 'Miller planes'))),
+      section(L5.measureTitle, measureTog.el, measureBody),
+      el('div', { class: 'xt-body', style: 'gap:6px' }, boundTog.el, bondTog.el, labelTog.el),
+      notesHost,
+      note(L5.unitNote)), 5);
 
-    const numbers = numbersSwitch({
-      label: 'Show numbers', value: cur().showNumbers,
-      onChange: (v) => {
-        setCr({ showNumbers: v });
-        if (!v) { viewer.measure.clear(); measureStat.update({ value: 'None', unit: '', hint: MEASURE_HINT }); if (!nb.on) viewer.clearHighlight(); }
-        paintPlane();
-        drawPlanes();
-      },
-    },
-    stats(tDensity.el, tNearest.el, tTouch.el, tAtoms.el, tDrawn.el, tPack.el),
-    kv,
-    el('div', { class: 'xt-body', style: 'gap:6px' }, planePick.el, planeNote),
-    section('Measure', measureStat.el, row(clearBtn)),
-    el('div', { class: 'xt-body', style: 'gap:6px' }, boundTog.el, bondTog.el, labelTog.el),
-    note('1 Å = 0.1 nanometer'),
-    srcRow);
-
-    panelB.append(ans.el, chipHost, nbBox, whyBox, toggles, packNote, notesHost, numbers.el);
+    panelB.append(tilesWrap, trustRow, glossBox, nbBox, toggles, notes3, ideasBox, whyBox, deep);
 
     // ---------- panel C ----------
     const legendHost = el('div', {});
     panelC.append(
       viewControls(store, viewer),
       section('Atoms', legendHost),
-      note('Drag to turn the block. Pinch or scroll to zoom. Tap an atom to see what touches it.'),
+      note(L3.notes[0]),
     );
 
     // ---------- painting the text that depends on the crystal ----------
+    function clearMeasureUi() {
+      viewer.measure.clear();
+      measureStat.update({ value: L5.measureNone, unit: '', hint: L5.measureHint });
+    }
+
+    function applyTapMode() {
+      const m = lvl() >= 5 && measureOn;
+      viewer.setTapMode(m ? 'measure' : 'info');
+      if (m) card.hide();
+    }
+
+    function paintAnswer() {
+      const c = crystalOf();
+      const p = plainOf(c);
+      const l1 = TEXT.l1.answers[c.id];
+      if (lvl() < 3 && l1) ans.update({ kind: 'info', title: l1.title, text: l1.text });
+      else ans.update({ kind: 'info', title: p.name, text: p.text });
+    }
+
+    function paintSummary() {
+      const c = crystalOf();
+      const p = plainOf(c);
+      const name = p.name.replace(' at room temperature', '').replace(' when red hot', ', hot');
+      summaryEl.textContent = lvl() >= 4 ? `${name} · ${p.shape} · ${neighborShort(c)}` : `${name} · ${p.shape}`;
+    }
+
     function paintNb() {
       const c = crystalOf();
       nbLine.textContent = neighborLine(c);
-      nbBtn.textContent = nb.on ? 'Hide the neighbors' : 'Show one atom\'s neighbors';
-      if (!nb.on) { nbStatus.textContent = 'Tap any atom to see what touches it.'; return; }
+      nbBtn.textContent = nb.on ? L3.controls.neighborsOff : L3.controls.neighbors;
+      if (!nb.on) { nbStatus.textContent = L3.tapHint; return; }
       const a = built.structure.atoms[nb.center];
       const rule = shellRule(c, a.basisIndex);
-      const n = nb.list.length;
-      const noun = n === 1 ? 'neighbor' : 'neighbors';
-      nbStatus.textContent = n >= rule.count
-        ? `Showing ${n} ${noun} of the marked atom. The rest of the block is faded.`
-        : `Showing ${n} of ${rule.count} neighbors. The others are outside this block.`;
+      nbStatus.textContent = nb.list.length >= rule.count ? L3.nbShown : L3.nbPartial;
     }
 
     function paintPlane() {
       const c = crystalOf();
       const planes = c.planes || [];
       const s = cur();
-      planeTog.el.style.display = planes.length ? '' : 'none';
+      planeRow.style.display = planes.length ? '' : 'none';
       planeHint.style.display = planes.length ? '' : 'none';
-      planeTog.el.querySelector('.toggle-label').textContent = c.id === 'graphite' ? 'Show one sheet' : 'Show the sliding layer';
-      planeHint.textContent = c.id === 'graphite' ? 'The sheets slide over each other. That is why pencils write.' : SHEET_PLAIN + '.';
+      planeTog.el.querySelector('.toggle-label').textContent = c.id === 'graphite' ? L3.controls.sheet : L3.controls.plane;
+      planeHint.textContent = c.id === 'graphite' ? L3.sheetGraphite : L3.sheetPlain + '.';
       planeTog.set(s.plane != null && !!planes[s.plane]);
       if (planeFor !== c.id) {
-        planePick.setOptions([{ value: 'none', label: 'None' }, ...planes.map((p, i) => ({ value: String(i), label: p.label }))]);
+        planePick.setOptions([{ value: 'none', label: L5.planeNone }, ...planes.map((p, i) => ({ value: String(i), label: p.label }))]);
         planeFor = c.id;
       }
       planePick.set(s.plane != null && planes[s.plane] ? String(s.plane) : 'none');
       const p = s.plane != null ? planes[s.plane] : null;
-      planeNote.textContent = p ? p.note : (planes.length ? 'Pick a plane to draw it on the block.' : 'This crystal has no plane drawn.');
+      planeNote.textContent = p ? p.note : (planes.length ? L5.planePick : L5.planeNoneDrawn);
       planePick.el.style.display = planes.length ? '' : 'none';
+    }
+
+    function paintIdeas() {
+      const c = crystalOf();
+      const ids = ['crystal', 'cell'];
+      if (PATTERN_CARD[c.id]) ids.push(PATTERN_CARD[c.id]);
+      ids.push('neighbors', 'packing', 'slip', 'cleavage', 'grain');
+      const labels = { crystal: 'Crystal', cell: 'Repeating block', bcc: 'Body-centered cube', fcc: 'Face-centered cube', hcp: 'Hexagonal pattern', neighbors: 'Touching neighbors', packing: 'Packing', slip: 'Slip', cleavage: 'Cleavage', grain: 'Grain' };
+      ideaChips.replaceChildren(...ids.map((id) => infoChip(card, id, labels[id])));
     }
 
     function paintAll() {
@@ -575,59 +602,75 @@ export default {
       const s = cur();
       paintPicker();
       amountSlider.set(s.amount);
-      ans.update({ kind: 'info', title: p.name, text: p.text });
-      chipHost.replaceChildren();
-      if (c.quality !== 'reference') chipHost.append(el('span', { class: 'xt-chip', text: c.quality === 'schematic' ? 'Schematic' : 'Approximate' }));
+      paintAnswer();
+      aboutHost.replaceChildren(infoChip(card, c.id, p.name));
       whyHost.replaceChildren(...whyList(c).map((t) => el('li', { text: t })));
       cellTog.set(s.showCell);
       boundTog.set(s.showBoundary);
       bondTog.set(s.showBonds);
+      iceNote.hidden = c.id !== 'ice_ih';
       notesHost.replaceChildren();
       if (c.paramNote) notesHost.append(el('p', { class: 'xt-small', text: c.paramNote }));
       if (c.cellNote) notesHost.append(el('p', { class: 'xt-small', text: c.cellNote }));
-      if (c.id === 'ice_ih') notesHost.append(el('p', { class: 'xt-small', text: 'The hydrogen positions shown are one tidy arrangement. In real ice they are jumbled.' }));
       paintPlane();
       paintNumbers();
       paintNb();
+      paintIdeas();
       legendHost.replaceChildren(legend(Array.from(new Set(c.basis.map((b) => b.el))).map((sym) => ({ color: (c.group === 'metal' && METAL_TINT[sym]) || ELEMENTS[sym].color, label: ELEMENTS[sym].name }))));
-      summaryEl.textContent = `${p.name.replace(' at room temperature', '').replace(' when it is red hot', ', hot')} · ${p.shape} · ${neighborShort(c)}`;
+      paintSummary();
     }
 
     function paintNumbers() {
       const c = crystalOf();
       const e = c.expect;
       const rho = density(c);
-      tDensity.update({ value: rho, digits: 3, source: c.source, hint: `Reference value ${e.density.toFixed(3)} g/cm³` });
-      const bi = 0;
+      const P = c.params;
+
+      // level 4 tiles, each value in US units first, then metric, with one everyday comparison
+      const n = neighborCount(c);
+      tNeighbors.update({
+        us: e.shells ? `${n}` : String(n), si: null,
+        compare: L4.tiles.neighbors.compare(n) + (e.shells ? ` ${L4.shellsNote}` : ''),
+      });
+      const ang = dual.angstrom(P.a);
+      tBlock.update({
+        us: null, si: ang.si,
+        compare: `${ang.alt}. ${L4.tiles.block.compare}${P.c !== P.a ? ` Its other edge is ${nice(P.c)} Å.` : ''}`,
+      });
+      const pf = packingFraction(c);
+      tPack.el.style.display = pf == null ? 'none' : '';
+      if (pf != null) tPack.update({ us: `${Math.round(pf * 100)}%`, si: null, compare: L4.tiles.packing.compare(pf * 100) });
+      const rd = dual.gcc(rho);
+      tDens.update({ us: rd.us, si: rd.si, compare: L4.tiles.density.perCrystal[c.id] || L4.tiles.density.compare });
+
+      // level 5 deep numbers (same values as before this pass)
       let nearest; let touching;
       if (e.neighborEl) {
-        const list = neighbors(c, bi, 6).filter((n) => n.el === e.neighborEl);
-        nearest = list[0].d; touching = list.filter((n) => n.d <= nearest * (1 + (e.coordinationTol ?? 0.08))).length;
+        const list = neighbors(c, 0, 6).filter((x) => x.el === e.neighborEl);
+        nearest = list[0].d; touching = list.filter((x) => x.d <= nearest * (1 + (e.coordinationTol ?? 0.08))).length;
       } else {
-        const co = coordination(c, bi, e.coordinationTol ?? 0.08);
+        const co = coordination(c, 0, e.coordinationTol ?? 0.08);
         nearest = co.distance; touching = co.number;
       }
       tNearest.update({ value: nearest, digits: 3, source: c.source });
       tTouch.update({
         value: e.shells ? `${e.shells[0].n} + ${e.shells[1].n}` : touching,
         digits: 0,
-        hint: e.shells ? 'Six in the same layer and six in the layers above and below.' : (e.sites && e.sites.length > 1 ? e.sites.map((x) => `${x.el}: ${x.coordination}`).join(', ') : ''),
+        hint: e.shells ? L4.shellsNote : (e.sites && e.sites.length > 1 ? e.sites.map((x) => `${x.el}: ${x.coordination}`).join(', ') : ''),
       });
-      tAtoms.update({ value: atomsPerCell(c), digits: 0, hint: e.formulaUnits ? `${e.formulaUnits} formula units` : '' });
+      tAtoms.update({ value: atomsPerCell(c), digits: 0, hint: e.formulaUnits ? L5.formulaUnits(e.formulaUnits) : '' });
       tDrawn.update({ value: built.structure ? built.structure.atoms.length : 0, digits: 0 });
-      const pf = packingFraction(c);
-      tPack.el.style.display = pf == null ? 'none' : '';
-      if (pf != null) tPack.update({ value: pf * 100, digits: 1, unit: '%', hint: 'If the atoms were hard balls that touch.' });
-      const P = c.params;
-      kv.replaceChildren(
-        ...[
-          ['Stacking pattern', c.lattice],
-          ['Crystal system', c.system],
-          ['Cell edges a, b, c', `${P.a} ${P.b} ${P.c} Å`],
-          ['Cell angles', `${P.alpha}° ${P.beta}° ${P.gamma}°`],
-        ].flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: String(v) })]),
-      );
-      srcRow.replaceChildren(el('span', { class: 'muted', text: 'Data' }), sourceTag(c.source), el('span', { class: 'xt-small', text: c.quality === 'reference' ? 'Reference values' : c.quality === 'approximate' ? 'Approximate values' : 'Schematic' }));
+      const rows = [
+        [L5.pattern, c.lattice],
+        [L5.system, c.system],
+        [L5.edges, `${P.a} ${P.b} ${P.c} Å`],
+        [L5.angles, `${P.alpha}° ${P.beta}° ${P.gamma}°`],
+        [`${L5.density} (computed)`, `${rho.toFixed(3)} g/cm³`],
+        [`${L5.density} (reference)`, `${e.density.toFixed(3)} g/cm³`],
+      ];
+      if (pf != null) rows.push([L5.packing, `${(pf * 100).toFixed(1)}%`]);
+      kv.replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: String(v) })]));
+      srcRow.replaceChildren(el('span', { class: 'muted', text: L4.dataLabel }), sourceTag(c.source), el('span', { class: 'xt-small', text: L4.trust[c.quality] || L4.trust.reference }));
     }
 
     function setNeighbors(idx) {
@@ -654,25 +697,56 @@ export default {
       paintAll();
     }
 
-    // ---------- taps ----------
-    const offTap = stage.onTap(({ clientX, clientY }) => {
+    // ---------- cards: point at an atom or a stick (wide screens), tap (phone, tablet) ----------
+    function atomExtra(p) {
+      if (lvl() < 4) return undefined;
+      try {
+        const a = built.structure.atoms[p.index];
+        return [{ label: L5.touching, value: String(shellRule(crystalOf(), a.basisIndex).count) }];
+      } catch (e) { return undefined; }
+    }
+    const cardIdOf = (p) => (p.kind === 'atom' ? elementId(p.element) : (p.hbond ? 'hbond' : 'bond'));
+    const offHover = viewer.onHover((p) => {
       if (dead) return;
-      const hit = viewer.pickAtom(clientX, clientY);
-      if (cur().showNumbers) {
-        if (!hit) return;
-        const m = viewer.measure.add(hit.index);
-        if (m.type === 'distance') measureStat.update({ value: m.value, digits: 2, unit: 'Å', hint: 'Distance between the two atoms. 1 Å is 0.1 nanometer.' });
-        else if (m.type === 'angle') measureStat.update({ value: m.value, digits: 1, unit: '°', hint: 'Angle at the second atom you tapped.' });
-        else measureStat.update({ value: 'None', unit: '', hint: 'Tap one more atom to measure a distance.' });
-        return;
-      }
-      if (!hit) {
+      if (viewer.tapMode === 'measure' || !p.kind) { card.hideHover(); return; }
+      if (card.isPinned()) return;
+      card.show(cardIdOf(p), { x: p.clientX, y: p.clientY, extra: p.kind === 'atom' ? atomExtra(p) : undefined });
+    });
+    cleanup.push(offHover);
+    const offTapInfo = viewer.onTapInfo((p) => {
+      if (dead) return;
+      if (!p.kind) {
+        card.hide();
         if (nb.on) { nb = { on: false, center: -1, list: [] }; draw(false); paintNb(); }
         return;
       }
-      setNeighbors(hit.index);
+      card.show(cardIdOf(p), { x: p.clientX, y: p.clientY, pinned: true, extra: p.kind === 'atom' ? atomExtra(p) : undefined });
+      if (p.kind === 'atom' && lvl() >= 3) setNeighbors(p.index);
+    });
+    cleanup.push(offTapInfo);
+
+    // measuring (level 5, Measure switch on)
+    const offTap = stage.onTap(({ clientX, clientY }) => {
+      if (dead || viewer.tapMode !== 'measure') return;
+      const hit = viewer.pickAtom(clientX, clientY);
+      if (!hit) return;
+      const m = viewer.measure.add(hit.index);
+      if (m.type === 'distance') measureStat.update({ value: m.value, digits: 2, unit: 'Å', hint: L5.measureDistance });
+      else if (m.type === 'angle') measureStat.update({ value: m.value, digits: 1, unit: '°', hint: L5.measureAngle });
+      else measureStat.update({ value: L5.measureNone, unit: '', hint: L5.measureOne });
     });
     cleanup.push(offTap);
+
+    // ---------- a level change repaints the words and the plane label, and picks the tap mode ----------
+    const offLevel = layers.onChange(() => {
+      if (dead) return;
+      if (lvl() < 5 && measureOn) { measureOn = false; measureTog.set(false); measureBody.hidden = true; clearMeasureUi(); if (!nb.on) viewer.clearHighlight(); }
+      paintAnswer();
+      paintSummary();
+      drawPlanes();
+      applyTapMode();
+    });
+    cleanup.push(offLevel);
 
     // ---------- keep controls in step with the store (style changes made in panel C) ----------
     const unsub = store.subscribe((s) => {
