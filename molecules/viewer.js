@@ -1350,13 +1350,26 @@ export function createViewer(stage, opts = {}) {
       out.elementA = st.atoms[bd.a].el; out.elementB = st.atoms[bd.b].el;
       return out;
     };
-    const hit = stage.pick(clientX, clientY, [...atomMeshes, ...gBonds.children]);
-    if (hit && hit.instanceId != null) {
-      const ind = hit.object.userData.indices;
-      if (ind) return atomOut(ind[hit.instanceId]);
-      const bo = hit.object.userData.bondOf;
-      if (bo && bo[hit.instanceId] >= 0) return bondOut(bo[hit.instanceId], false);
+    // Atoms win over bonds, unless a bond is clearly in front of the atom (nearer than half its radius).
+    const hitA = stage.pick(clientX, clientY, atomMeshes);
+    const hitB = gBonds.children.length ? stage.pick(clientX, clientY, gBonds.children) : null;
+    const idxA = hitA && hitA.instanceId != null && hitA.object.userData.indices ? hitA.object.userData.indices[hitA.instanceId] : -1;
+    const boA = hitB && hitB.instanceId != null && hitB.object.userData.bondOf ? hitB.object.userData.bondOf[hitB.instanceId] : -1;
+    let bondWins = boA >= 0 && idxA < 0;
+    if (boA >= 0 && idxA >= 0 && hitB.distance < hitA.distance - 0.5 * radii[idxA]) {
+      // a bond in front of the atom wins only when the pointer is off the middle of the atom's disc
+      const sc = screenOf(idxA);
+      let rpx = 0;
+      const rr = rayRect();
+      if (sc && rr) {
+        const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).multiplyScalar(radii[idxA]);
+        const q = atomPos[idxA].clone().applyMatrix4(group.matrixWorld).add(right).project(camera);
+        rpx = Math.abs(rr.left + ((q.x + 1) / 2) * rr.width - sc.x);
+      }
+      bondWins = !sc || Math.hypot(sc.x - clientX, sc.y - clientY) > 0.55 * rpx;
     }
+    if (bondWins) return bondOut(boA, false);
+    if (idxA >= 0) return atomOut(idxA);
     const near = pickAtom(clientX, clientY);
     if (near) return atomOut(near.index);
     if (Array.isArray(st.bonds) && st.bonds.length && state.style !== 'space-fill') {

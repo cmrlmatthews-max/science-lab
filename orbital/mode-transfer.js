@@ -142,7 +142,7 @@ function plainDur(seconds, both = false) {
   const s = Math.abs(seconds);
   if (s < 90) return plural(Math.max(1, Math.round(s)), 'second');
   if (s < 5400) return plural(Math.round(s / 60), 'minute');
-  if (s < 172800) { const h = s / 3600; return plural(h < 3 ? trimNum(h, 1) : Math.round(h), 'hour'); }
+  if (s < 172800) { const h = s / 3600; return plural(h < 10 ? trimNum(h, 1) : Math.round(h), 'hour'); }
   const d = s / 86400;
   if (d <= 60) return plural(d < 10 ? trimNum(d, 1) : Math.round(d), 'day');
   const m = trimNum(d / 30.44, 1);
