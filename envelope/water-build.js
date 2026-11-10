@@ -259,9 +259,9 @@ export function buildErrors(env) {
 
   return {
     calls, hot,
-    frame: { box: [-3, -10, 0, 66, 72, 12], dir: [0.82, 0.22, 1.1], pad: 0.98 },
+    frame: { box: [-3, -10, 0, 66, narrow ? 80 : 72, 12], dir: [0.82, 0.22, 1.1], pad: 0.98 },
     light: { dir: [-0.6, 0.7, 0.75], floorY: -5.05 },
-    markers: [{ text: 'Outside · rain', pos: [58, 71, face + 6], tone: 'cold' }, { text: 'Inside · dry', pos: [6, 71, -3], tone: 'warm' }],
+    markers: [{ text: 'Outside · rain', pos: [58, narrow ? 79 : 71, face + 6], tone: 'cold' }, { text: 'Inside · dry', pos: [6, 71, -3], tone: 'warm' }],
     rainBox: rb,
   };
 }

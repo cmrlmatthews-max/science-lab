@@ -152,6 +152,8 @@ export function createBridgeScene(stage, stageEl) {
   });
 
   // ---------------------------------------------------------------- helpers
+  const isNarrow = () => stageEl.dataset.narrow === 'true';
+  const KEEP_NARROW = ['thermal_break_unit', 'shelf_angle', 'standoff_bracket', 'slab_edge', 'balcony_slab'];
   const visibleSides = () => sides.map((s, k) => (s && (st.single == null || st.single === k) ? k : -1)).filter((k) => k >= 0);
 
   function slotOffset(k) {
@@ -553,36 +555,48 @@ export function createBridgeScene(stage, stageEl) {
         const back = toPx(s.model.P(s.r.nx / 2, s.r.ny, 0).add(s.group.position));
         s.markers[0].setPosition(pxToWorld(front.x, bb.y1 + 56, s.cold.object.position));
         s.markers[1].setPosition(pxToWorld(back.x, bb.y0 - 16, s.model.P(s.r.nx / 2, s.r.ny, 0).add(s.group.position)));
+        s.markerPx = [{ x: front.x, y: bb.y1 + 56 }, { x: back.x, y: bb.y0 - 16 }];
         titleEls[k].anchor = { x: front.x, y: bb.y1 + 86 };
         return;
       }
       // ----- section: one staircase of names above the first model (the second shows only what is new), specials around it
       const first = sides[vis[0]];
+      const narrow = isNarrow();
       own.forEach((c) => {
-        const dup = k !== vis[0] && first.callouts.some((o) => o.api.text === c.api.text);
+        const dup = (k !== vis[0] && first.callouts.some((o) => o.api.text === c.api.text)) || (narrow && !KEEP_NARROW.includes(c.api.userData.infoId));
         c.api.userData.secondary = dup;
         c.api.setVisible(!hide && !dup);
       });
-      const topItems = own.filter((c) => c.api.userData.place === 'top' && !c.api.userData.secondary).map((c) => ({ c, api: c.api, a: toPx(c.api.object.position) }));
-      topItems.push({ c: null, api: s.cold, a: toPx(s.cold.object.position) });
-      topItems.sort((u, v) => u.a.x - v.a.x);
-      const T2 = 22;
-      let ty = bb.y0 - 14;
-      for (let idx = topItems.length - 1; idx >= 0; idx--) {
-        const it = topItems[idx];
-        const extra = Math.max(0, it.api.size.h - 26);
-        ty -= extra;
-        setPx(it.api, it.a.x - 4, ty, 'right');
-        ty -= T2;
-      }
+      const topItems = own.filter((c) => c.api.userData.place === 'top' && !c.api.userData.secondary).map((c) => ({ api: c.api, a: toPx(c.api.object.position) }));
+      topItems.push({ api: s.cold, a: toPx(s.cold.object.position) });
+      // pack right to left: an item takes the lowest row where it clears its neighbours, so leaders never cross a label
+      topItems.sort((u, v) => v.a.x - u.a.x);
+      const rows = [];
+      topItems.forEach((it) => {
+        const left = it.a.x - 4; const right = left + it.api.size.w;
+        let t = 0;
+        for (;; t++) {
+          const row = rows[t] || (rows[t] = []);
+          if (row.every((q) => right + 8 < q.left)) { row.push({ left, h: it.api.size.h }); break; }
+        }
+        it.row = t; it.left = left;
+      });
+      let base = bb.y0 - 8;
+      const rowY = rows.map((row) => {
+        const h = Math.max(24, ...row.map((q) => q.h));
+        const y = base - h / 2 - 2;
+        base -= h - 2;
+        return y;
+      });
+      topItems.forEach((it) => setPx(it.api, it.left, rowY[it.row], 'right'));
       own.forEach((c) => {
         const pl = c.api.userData.place;
         if (pl === 'roomSlab') {
-          const stubBot = toPx(new THREE.Vector3(0, s.model.decor.slab.y0, -S_IN * 0.55).add(s.group.position));
-          setPx(c.api, stubBot.x - 20, stubBot.y + 34, 'right');
+          const stubTop = toPx(new THREE.Vector3(0, s.model.decor.floorTop, -S_IN * 0.2).add(s.group.position));
+          setPx(c.api, stubTop.x, stubTop.y - 36, 'left');
         } else if (pl === 'balcony') {
-          const stubBot = toPx(new THREE.Vector3(0, s.model.decor.slab.y0, s.r.depthIn + S_OUT).add(s.group.position));
-          setPx(c.api, stubBot.x - 6, stubBot.y + 30, 'left');
+          const stubTop = toPx(new THREE.Vector3(0, s.model.decor.slab.y1, s.r.depthIn + S_OUT * 0.15).add(s.group.position));
+          setPx(c.api, stubTop.x, stubTop.y - 36, 'right');
         }
       });
       const inP = toPx(new THREE.Vector3(0, 0, -S_IN).add(s.group.position));
@@ -593,6 +607,7 @@ export function createBridgeScene(stage, stageEl) {
       const outX = Math.max(outP.x - 50, mid + mw / 2 + 3);
       s.markers[0].setPosition(pxToWorld(inX, bb.y1 + 16, new THREE.Vector3(0, 0, -S_IN).add(s.group.position)));
       s.markers[1].setPosition(pxToWorld(outX, bb.y1 + 16, new THREE.Vector3(0, 0, s.r.depthIn).add(s.group.position)));
+      s.markerPx = [{ x: inX, y: bb.y1 + 16 }, { x: outX, y: bb.y1 + 16 }];
       titleEls[k].anchor = { x: (inP.x + outP.x) / 2, y: bb.y1 + 44 };
     });
     updateOverlays();
@@ -604,7 +619,7 @@ export function createBridgeScene(stage, stageEl) {
     const rect = canvasRect();
     [0, 1].forEach((k) => {
       const t = titleEls[k];
-      const on = vis.includes(k) && t.anchor;
+      const on = vis.includes(k) && t.anchor && !isNarrow();
       t.root.style.display = on ? '' : 'none';
       if (!on) return;
       t.root.style.left = `${t.anchor.x}px`;
@@ -727,12 +742,14 @@ export function createBridgeScene(stage, stageEl) {
         { const rr = s2.cold.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); }
         const b2 = worldBox(k);
         [b2.min.x, b2.max.x].forEach((x) => [b2.min.y, b2.max.y].forEach((y) => [b2.min.z, b2.max.z].forEach((z) => { const p = toPx(new THREE.Vector3(x, y, z)); grow({ left: p.x, right: p.x, top: p.y, bottom: p.y }); })));
-        const ta = titleEls[k].anchor;
+        (s2.markerPx || []).forEach((q) => grow({ left: q.x - 60, right: q.x + 60, top: q.y - 17, bottom: q.y + 17 }));
+        const ta = isNarrow() ? null : titleEls[k].anchor;
         if (ta) { const tw = Math.min(rect.width * 0.46, 40 + (titleEls[k].text.textContent.length * 6.6)); grow({ left: ta.x - tw / 2, right: ta.x + tw / 2, top: ta.y, bottom: ta.y + 28 }); }
       });
       const m = 10;
-      const over = Math.max(0, (m - x0) / rect.width, (x1 - (rect.width - m)) / rect.width, (m - y0) / rect.height, (y1 - (rect.height - m)) / rect.height);
-      return { over, x0, x1, y0, y1, rect };
+      const rt = isNarrow() ? 58 : 0; const rb = isNarrow() ? 60 : 0;
+      const over = Math.max(0, (m - x0) / rect.width, (x1 - (rect.width - m)) / rect.width, (m + rt - y0) / rect.height, (y1 - (rect.height - m - rb)) / rect.height);
+      return { over, x0, x1, y0, y1, rect, rt, rb };
     };
     const solve = () => {
       let lo = 0.4; let hi = 7;
@@ -748,7 +765,7 @@ export function createBridgeScene(stage, stageEl) {
       const vf = THREE.MathUtils.degToRad(stage.camera.fov);
       const ppi = r.rect.height / (2 * info.dist * Math.tan(vf / 2));
       shift.addScaledVector(info.right, ((r.x0 + r.x1) / 2 - r.rect.width / 2) / ppi);
-      shift.addScaledVector(info.upv, (r.rect.height / 2 - (r.y0 + r.y1) / 2) / ppi);
+      shift.addScaledVector(info.upv, ((r.rt + (r.rect.height - r.rt - r.rb) / 2) - (r.y0 + r.y1) / 2) / ppi);
     }
     solve();
     st.userMoved = false;

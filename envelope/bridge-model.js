@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { Mesher } from './bridge-parts.js';
 
-export const PLAN_H = 8;       // inches of wall below the plan cut
+export const PLAN_H = 5;       // inches of wall below the plan cut
 export const LX = 12;          // inches the section parts run behind the cut
 export const S_IN = 12;        // room-side stub (floor slab) in inches
 export const S_OUT = 10;       // balcony stub in inches
