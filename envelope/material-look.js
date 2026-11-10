@@ -782,11 +782,14 @@ function pump() {
   }, 0);
 }
 
+const PHOTO_FILES = new Set(['brick', 'osb', 'batt', 'minwool', 'cmu', 'wood', 'concrete']);
 function loadAsset(name) {
   let st = assetState.get(name);
   if (st) return st;
   st = { status: 'pending', color: null, bump: null, subs: new Set() };
   assetState.set(name, st);
+  // Only these photo files exist. Other materials use the drawn surface and make no request.
+  if (!PHOTO_FILES.has(name)) { st.status = 'missing'; return st; }
   const url = new URL(`../assets/materials/${name}.jpg`, import.meta.url).href;
   new THREE.TextureLoader().load(url, (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
