@@ -957,8 +957,9 @@ export function createWall3D(stage) {
     // inside / outside markers and scale
     const tIn = climate ? climate.tIn : 70; const tOut = climate ? climate.tOut : 20;
     const warmIn = tIn >= tOut;
-    inMarker.setText(`Inside · ${fmt0(tIn)} °F`); inMarker.setTone(warmIn ? 'warm' : 'cold');
-    outMarker.setText(`Outside · ${fmt0(tOut)} °F`); outMarker.setTone(warmIn ? 'cold' : 'warm');
+    // The camera looks from the exterior, so say where each side is.
+    inMarker.setText(isNarrow() ? `Inside · ${fmt0(tIn)} °F` : `Inside, behind the wall · ${fmt0(tIn)} °F`); inMarker.setTone(warmIn ? 'warm' : 'cold');
+    outMarker.setText(isNarrow() ? `Outside · ${fmt0(tOut)} °F` : `Outside, where you stand · ${fmt0(tOut)} °F`); outMarker.setTone(warmIn ? 'cold' : 'warm');
     const zFront = totalDepth + (n - 1) * gp;
     const nar = isNarrow();
     [inMarker, outMarker, scaleMarker].forEach((m) => m.setFont(nar ? 12 : 13.5));
