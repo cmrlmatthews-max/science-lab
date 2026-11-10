@@ -39,7 +39,7 @@ const ASSET_NAME = {
 };
 // the photo covers this many inches on each side (tunable if a photo shows a different patch size)
 const ASSET_TILE = {
-  brick: 64, cmu: 32, concrete: 48, osb: 20, plywood: 24, batt: 16, minwool: 12, xps: 24, eps: 12, polyiso: 24, gypsum: 24,
+  brick: 43, cmu: 32, concrete: 48, osb: 20, plywood: 24, batt: 16, minwool: 12, xps: 24, eps: 12, polyiso: 24, gypsum: 24,
   fibercement: 12, wood: 18, steel: 12, stucco: 12, wrb: 12,
 };
 const MIRROR = new Set(['wood', 'batt', 'concrete']);

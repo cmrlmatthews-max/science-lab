@@ -168,9 +168,10 @@ export default {
 
     // ----- first-visit defaults (survive mode switches afterwards) -----
     if (!store.get().molecules.ready) {
-      store.set({ molecules: { ...store.get().molecules, showDipole: false, showNumbers: false, ready: true } });
-      if (!prefersReducedMotion()) store.set({ view: { ...store.get().view, spin: true } });
+      store.set({ molecules: { ...store.get().molecules, showDipole: false, showNumbers: false, spin: !prefersReducedMotion(), ready: true } });
     }
+    // Other modes may turn spin off; this mode keeps its own spin choice and restores it.
+    if (!!store.get().view.spin !== !!store.get().molecules.spin) store.set({ view: { ...store.get().view, spin: !!store.get().molecules.spin } });
     const M = () => store.get().molecules;
     const setM = (patch) => store.set({ molecules: { ...store.get().molecules, ...patch } });
     const cur = () => (MOLECULES[M().id] ? M().id : 'water');
@@ -398,6 +399,7 @@ export default {
       const vw = s.view || {};
       if (vw.style && vw.style !== showAs.get()) { showAs.set(vw.style); drawArrows(); }
       if (vw.labels != null && !!vw.labels !== labelsToggle.get()) labelsToggle.set(vw.labels);
+      if (vw.spin != null && !!vw.spin !== !!s.molecules.spin) setM({ spin: !!vw.spin });
     });
     this._cleanup.push(unsub);
 
