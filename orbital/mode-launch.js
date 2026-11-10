@@ -80,6 +80,13 @@ function flightPerSecond(warp) {
   return `${fmt(d.value, v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${d.unit} of flight per second`;
 }
 const bigNum = (n) => Math.round(n).toLocaleString('en-US');
+const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+/** Large numbers as 1.33 × 10¹¹ so that table columns stay narrow. */
+function sci(n) {
+  if (n < 1e6) return bigNum(n);
+  const e = Math.floor(Math.log10(n));
+  return `${(n / Math.pow(10, e)).toFixed(2)} × 10${String(e).split('').map((c) => SUP[c]).join('')}`;
+}
 
 /** Which plain answer fits this result: drop, slow, up, skim, orbit, oval or escape. */
 function outcomeKey(m) {
@@ -177,8 +184,9 @@ const CSS = `
 .launch-formula-gloss { font-size: 12.5px; color: var(--ink-2); }
 .launch-table-wrap { overflow-x: auto; }
 .launch-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-.launch-table th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 4px 6px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
-.launch-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.launch-table th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 4px 6px; border-bottom: 1px solid var(--line-strong); }
+.launch-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+.launch-table td .launch-hint { font-size: 11px; }
 .launch-table tr[data-now="true"] td { background: var(--accent-soft); }
 `;
 
@@ -483,14 +491,22 @@ export default {
       }));
 
     // level 2: the story
-    const storyW = makeStory(T.l2.steps.map((s, i) => ({ ...s, run: RUNS[i] })), { title: 'The story' });
+    // The story shows its current step in the 3D view when level 2 opens. If the person never pressed Back or Next,
+    // the launch they had before comes back when they leave level 2.
+    let storyTouched = false;
+    let storyAuto = false;
+    let beforeStory = null;
+    const storyW = makeStory(T.l2.steps.map((s, i) => ({ ...s, run: RUNS[i] })), {
+      title: 'The story',
+      onStep: () => { if (!storyAuto) storyTouched = true; },
+    });
 
     const speedBlock = el('div', { class: 'launch-stack', style: { gap: '8px' } }, speedS.el, speedHint);
     const altBlock = el('div', { class: 'launch-stack', style: { gap: '8px' } }, altS.el, heightHint);
     const angleBlock = el('div', { class: 'launch-stack', style: { gap: '8px' } }, angleS.el, angleHint, angleHint5);
     const moreA = el('div', { class: 'launch-more' }, exactSpeedHint, quickBox);
 
-    layers.gate(choicesBox, 1, 2);
+    layers.gate(choicesBox, 1, 1);
     layers.gate(storyW.el, 2, 2);
     layers.gate(bodySel.el, 5, 5);
     layers.gate(speedBlock, 3, 5);
@@ -669,12 +685,13 @@ export default {
       el('thead', {}, el('tr', {}, ...T.l5.bodiesCols.map((c) => el('th', { scope: 'col', text: c })))),
       el('tbody', {}, ...BODY_ORDER.map((id) => {
         const b = BODIES[id];
+        const two = (kmps) => { const d = dual.kmps(kmps, 2); return el('td', {}, el('div', { text: d.si }), el('div', { class: 'launch-hint', text: d.us })); };
         const tr = el('tr', { 'data-body': id },
           el('td', { text: b.name }),
-          el('td', { text: bigNum(b.mu) }),
-          el('td', { text: dual.km(b.radius, 0).text }),
-          el('td', { text: dual.kmps(circularSpeed(b.mu, b.radius), 2).text }),
-          el('td', { text: dual.kmps(escapeSpeed(b.mu, b.radius), 2).text }));
+          el('td', { text: sci(b.mu) }),
+          el('td', {}, el('div', { text: `${bigNum(b.radius)} km` }), el('div', { class: 'launch-hint', text: dual.km(b.radius, 0).us })),
+          two(circularSpeed(b.mu, b.radius)),
+          two(escapeSpeed(b.mu, b.radius)));
         return tr;
       })));
     const tableBox = el('div', { class: 'launch-stack', style: { gap: '8px' } },
@@ -1008,7 +1025,17 @@ export default {
       if (now < 5 && store.get().bodyId !== 'earth') switchBody('earth');
       repaintAll();
       // The story always starts by showing its current step in the 3D view.
-      if (now === 2 && prev !== 2) storyW.go(storyW.index());
+      if (now === 2 && prev !== 2) {
+        const { alt, speed, angleDeg } = getL();
+        beforeStory = { alt, speed, angleDeg };
+        storyAuto = true;
+        storyW.go(storyW.index());
+        storyAuto = false;
+      } else if (prev === 2 && now !== 2 && !storyTouched && beforeStory) {
+        const b = beforeStory;
+        beforeStory = null;
+        play({ alt: b.alt, speed: b.speed, angleDeg: b.angleDeg });
+      }
     }));
 
     // ---------- information cards: hover (Mac) and tap (iPhone, iPad) on the 3D view ----------
