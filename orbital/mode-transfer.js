@@ -42,7 +42,7 @@ import { dual, friendlyDuration, nice } from '../shared/units.js';
 import { TEXT, getInfo } from './content-transfer.js';
 import { BODIES, BODY_ORDER, TRANSFER_PRESETS } from './bodies.js';
 import { hohmann, elementsFromApsides, samplePath, positionAtTime, propellantFraction, formatDuration } from './physics.js';
-import { sceneScale, createBody, createPath, createCraft, createArrow, createMarker, createStars, timeControl, frameSpace, spaceTheme } from './space.js';
+import { sceneScale, setOrbitLift, createBody, createPath, createCraft, createArrow, createMarker, createStars, timeControl, frameSpace, spaceTheme } from './space.js';
 
 const TWO_PI = Math.PI * 2;
 const ENGINES = TEXT.l5.engines;
@@ -177,6 +177,7 @@ export default {
   get _debug() { return dbg; },
 
   mount(ctx) {
+    setOrbitLift(0);   // this mode has its own display gap (see GAP)
     const { stageEl, panelA, panelB, panelC, summaryEl, store, stage, layers, card } = ctx;
     const lvl = () => layers.level();
     card.setSource(getInfo);
@@ -353,7 +354,7 @@ export default {
       k = Math.pow(1.5, bucket);
 
       // body size and radial offset: keep a small visible gap between the body and the start orbit
-      const GAP = 0.9;
+      const GAP = 3;   // drawn gap between the body and the start orbit (not to scale, so that the low orbit reads)
       const realUnits = body.radius / k;
       const minR = body.id === 'sun' ? 3 : (realUnits < 1.6 ? 1.6 : 0);
       bodyOpts.minRadiusUnits = minR;

@@ -20,7 +20,7 @@ import { dual, friendlyDuration } from '../shared/units.js';
 import { BODIES, BODY_ORDER } from './bodies.js';
 import { propagate, formatDuration, circularSpeed, escapeSpeed } from './physics.js';
 import {
-  sceneScale, toScene, createBody, createPath, createCraft, createArrow, createMarker, createStars, createRings,
+  sceneScale, setOrbitLift, liftRadius, toScene, createBody, createPath, createCraft, createArrow, createMarker, createStars, createRings,
   timeControl, createClock, frameSpace, spaceTheme,
 } from './space.js';
 import { ALT_RANGE, defaultLaunch, maxSpeed, computeLaunch, describe } from './launch-model.js';
@@ -925,7 +925,8 @@ export default {
       const bodyChanged = bodyIdBuilt !== body.id;
 
       // extent bucket (x1.5 steps): rescale and reframe only when the path no longer fits or got much smaller
-      const idx = Math.ceil(Math.log(model.extent) / Math.log(1.5) - 1e-9);
+      setOrbitLift(body.id === 'sun' ? 0 : body.radius);
+      const idx = Math.ceil(Math.log(liftRadius(model.extent)) / Math.log(1.5) - 1e-9);
       let rescaled = false;
       if (kIdx === null || bodyChanged || idx > kIdx || idx <= kIdx - 2) { kIdx = idx; rescaled = true; }
       k = sceneScale(Math.pow(1.5, kIdx));

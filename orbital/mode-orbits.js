@@ -23,7 +23,7 @@ import { TEXT, getInfo } from './content-orbits.js';
 import { BODIES, BODY_ORDER, ORBIT_PRESETS } from './bodies.js';
 import { elementsFromApsides, positionAtTime, samplePath, formatDuration } from './physics.js';
 import {
-  sceneScale, createBody, createPath, createCraft, createArrow, createMarker, createStars, createRings,
+  sceneScale, setOrbitLift, liftKm, liftRadius, createBody, createPath, createCraft, createArrow, createMarker, createStars, createRings,
   timeControl, createClock, frameSpace, spaceTheme,
 } from './space.js';
 
@@ -410,8 +410,9 @@ export default {
           const cur = positionAtTime(body.mu, elements, ((i + j / per) / SLICES) * T).r;
           const o = (j - 1) * 9;
           // triangle: center, previous point, current point (orbit plane [x, y] -> scene (x, 0, -y))
-          pos[o + 3] = prev[0] / k; pos[o + 5] = -prev[1] / k;
-          pos[o + 6] = cur[0] / k; pos[o + 8] = -cur[1] / k;
+          const lp = liftKm(prev), lc = liftKm(cur);
+          pos[o + 3] = lp[0] / k; pos[o + 5] = -lp[1] / k;
+          pos[o + 6] = lc[0] / k; pos[o + 8] = -lc[1] / k;
           prev = cur;
         }
         const geo = new THREE.BufferGeometry();
@@ -445,7 +446,8 @@ export default {
       const o = getOrb();
       const frac = elements ? ((clock.t % elements.period) + elements.period) % elements.period / elements.period : 0;
       elements = elementsFor(body, o.pe, o.ap);
-      const rawK = sceneScale(2.2 * elements.ra);
+      setOrbitLift(body.id === 'sun' ? 0 : body.radius, 0.55);   // larger than Launch: this view looks at the orbit from a slant
+      const rawK = sceneScale(2.2 * liftRadius(elements.ra));
       const nb = Math.round(Math.log(rawK) / Math.log(BUCKET));
       const changed = nb !== bucket;
       bucket = nb;
@@ -950,7 +952,7 @@ export default {
       if (proj.z > 1) return null;
       return { x: rect.left + ((proj.x + 1) / 2) * rect.width, y: rect.top + ((1 - proj.y) / 2) * rect.height };
     }
-    const kmToScene = (p) => tmp.set(p[0] / k, 0, -p[1] / k);
+    const kmToScene = (p) => { const q = liftKm(p); return tmp.set(q[0] / k, 0, -q[1] / k); };
     function distToSegment(px, py, a, b) {
       const dx = b.x - a.x; const dy = b.y - a.y;
       const len2 = dx * dx + dy * dy;

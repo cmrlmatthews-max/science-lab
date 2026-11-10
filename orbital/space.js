@@ -182,8 +182,40 @@ export function sceneScale(extentKm) {
  * @param {number} kmPerUnit
  * @returns {THREE.Vector3}
  */
-export function toScene([x, y], kmPerUnit) {
+export function toScene(p, kmPerUnit) {
+  const [x, y] = liftKm(p);
   return new THREE.Vector3(x / kmPerUnit, 0, -y / kmPerUnit);
+}
+
+// ---------- display lift (not to scale) ----------
+// Low orbits sit very close to the body at true scale and are hard to read. The lift draws every point a little
+// farther out: a point on the surface stays on the surface, a low orbit moves out by about a quarter of the body
+// radius, and far points barely move. Display only; the numbers do not change.
+let liftR = 0;
+let liftAmt = 0;
+/**
+ * Turn the display lift on for a central body at the origin, or off with 0.
+ * @param {number} bodyRadiusKm 0 = off
+ * @param {number} [amount=0.3] largest lift as a share of the body radius
+ */
+export function setOrbitLift(bodyRadiusKm, amount = 0.3) {
+  liftR = bodyRadiusKm > 0 ? bodyRadiusKm : 0;
+  liftAmt = liftR ? amount : 0;
+}
+/** Lifted radius (km) for a true radius (km). */
+export function liftRadius(r) {
+  if (!liftR) return r;
+  const h = r - liftR;
+  if (h <= 0) return r;
+  return r + liftAmt * liftR * (1 - Math.exp(-h / (0.03 * liftR)));
+}
+/** Lifted orbit-plane point [x, y] km. Returns the same array when the lift is off. */
+export function liftKm(p) {
+  if (!liftR) return p;
+  const r = Math.hypot(p[0], p[1]);
+  if (r <= liftR || r < 1e-9) return p;
+  const s = liftRadius(r) / r;
+  return [p[0] * s, p[1] * s];
 }
 
 /**
@@ -612,7 +644,7 @@ export function createPath(points, kmPerUnit, opts = {}) {
       const arr = new Float32Array(total * 3);
       for (let i = 0; i < total; i++) {
         const p = pts[i % n];
-        arr[i * 3] = p[0] / k; arr[i * 3 + 1] = 0; arr[i * 3 + 2] = -p[1] / k;
+        const q = liftKm(p); arr[i * 3] = q[0] / k; arr[i * 3 + 1] = 0; arr[i * 3 + 2] = -q[1] / k;
       }
       geo.setPositions(arr);
     }
@@ -822,7 +854,7 @@ export function createCraft(opts = {}) {
   return {
     object,
     setPosition(posKm, kmPerUnit) {
-      craftGroup.position.set(posKm[0] / kmPerUnit, 0, -posKm[1] / kmPerUnit);
+      const q = liftKm(posKm); craftGroup.position.set(q[0] / kmPerUnit, 0, -q[1] / kmPerUnit);
       if (!trailLine) return;
       lastK = kmPerUnit;
       const step = 0.4 * kmPerUnit; // ignore moves smaller than 0.4 scene units
@@ -881,7 +913,7 @@ export function createArrow(opts = {}) {
       const L = lengthUnits;
       const hl = Math.min(L * 0.35, rad * 7);
       object.visible = true;
-      object.position.set(originKm[0] / kmPerUnit, 0, -originKm[1] / kmPerUnit);
+      const q = liftKm(originKm); object.position.set(q[0] / kmPerUnit, 0, -q[1] / kmPerUnit);
       object.quaternion.setFromUnitVectors(up, dir);
       shaft.scale.set(1, Math.max(0.001, L - hl), 1);
       head.position.set(0, L - hl, 0);
@@ -985,7 +1017,7 @@ export function createMarker(label, opts = {}) {
   draw();
   return {
     object,
-    setPosition(posKm, kmPerUnit) { object.position.set(posKm[0] / kmPerUnit, 0, -posKm[1] / kmPerUnit); },
+    setPosition(posKm, kmPerUnit) { const q = liftKm(posKm); object.position.set(q[0] / kmPerUnit, 0, -q[1] / kmPerUnit); },
     setLabel(t) { const n = String(t ?? ''); if (n !== text) { text = n; draw(); } },
     dispose() {
       labelTex.dispose(); labelMat.dispose();
