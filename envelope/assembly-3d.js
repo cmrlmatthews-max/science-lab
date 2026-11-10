@@ -239,7 +239,6 @@ export function createWall3D(stage) {
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const narrow = window.matchMedia && window.matchMedia('(max-width: 899px)').matches;
   const R = stage.renderer;
-  window.__QA_STAGE = stage; // QA-TEMP
   const root = new THREE.Group();
   stage.scene.add(root);
 
