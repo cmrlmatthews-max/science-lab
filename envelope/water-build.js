@@ -523,14 +523,14 @@ export function buildLayers(env) {
   const tops = wall.layers.map((l, i) => sz + 2.8 * (n - 1 - i));
   wall.layers.forEach((l, i) => {
     const m = MATERIALS[l.materialId];
-    const th = Math.max(l.thickness || 0.5, 0.5);
+    const th = Math.max(l.thickness || 0.5, 0.9);
     const z0 = z; const z1 = z + th; z = z1;
     const r = roles[i];
     const active = focus === 'all' ? LAYER_ORDER.find((rid) => r.roles.includes(rid)) : (r.roles.includes(focus) ? focus : null);
     const top = tops[i];
     const mk = (key) => {
-      if (active) return gfx.variant(key, { glow: colOf[active], glowK: 0.42 });
-      return gfx.variant(key, { sat: r.cladding ? 0.55 : 0.12, dim: r.cladding ? 0.92 : 0.8 });
+      if (active) return gfx.variant(key, { glow: colOf[active], glowK: 0.95 });
+      return gfx.variant(key, { sat: r.cladding ? 0.5 : 0.1, dim: r.cladding ? 0.85 : 0.72 });
     };
     const mid = l.materialId;
     const key = mid === 'airspace' ? 'air' : mid;

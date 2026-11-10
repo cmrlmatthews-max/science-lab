@@ -704,6 +704,18 @@ export function createBridgeScene(stage, stageEl) {
           info = fitBox(boxNow(), dir, pad, shift);
         }
       }
+      if (!plan && vis.length === 2) {
+        // the Inside and Outside tags of both models share one row: keep the models far enough apart for them
+        const a0 = toPx(new THREE.Vector3(0, 0, 0)); const a1 = toPx(new THREE.Vector3(0, 0, 10));
+        const ppi = Math.hypot(a1.x - a0.x, a1.y - a0.y) / 10 || 6;
+        const w0 = sides[0].r.depthIn + S_IN + (sides[0].r.detailId === 'slab' ? S_OUT : 0);
+        const need = Math.min(30, Math.max(8, 252 / ppi - w0));
+        if (Math.abs(need - st.gapSec) > 0.35) {
+          st.gapSec = need;
+          layoutAll();
+          info = fitBox(boxNow(), dir, pad, shift);
+        }
+      }
       placeLabels();
       // measure everything that has to stay inside the canvas
       const rect = canvasRect();

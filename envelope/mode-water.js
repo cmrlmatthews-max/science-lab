@@ -123,7 +123,7 @@ export default {
         depth = Math.max(depth, w.layers.reduce((a, l) => a + Math.max(l.thickness || 0.5, 0.5), 0));
         n = Math.max(n, w.layers.length);
       });
-      layerFrame = { box: [-10, 0, -7, 52, 48 + 2.8 * (n - 1) + 4, depth + 7], dir: [1.05, 0.55, 0.95], pad: 1.0 };
+      layerFrame = { box: [-10, 0, -7, 52, 48 + 2.8 * (n - 1) + 4, depth + 7], dir: [0.95, 0.95, 1.0], pad: 1.0 };
       return layerFrame;
     }
 

@@ -144,7 +144,7 @@ export default {
     const cleanup = this._cleanup = [];
 
     // ---------- state (kept in store.bridge so it survives a mode switch)
-    const defaults = { detailId: 'stud', studPair: 'ci', show: 'heat', arrows: true, labels: true, side: 'problem' };
+    const defaults = { detailId: 'stud', studPair: 'ci', show: 'both', arrows: true, labels: true, side: 'problem' };
     const b = { ...defaults, ...(store.get().bridge || {}) };
     if (!DETAILS[b.detailId]) b.detailId = defaults.detailId;
     if (!PAIRS.stud.some((p) => p.id === b.studPair)) b.studPair = defaults.studPair;
