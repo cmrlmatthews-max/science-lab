@@ -600,6 +600,8 @@ export default {
       chip('kepler', TEXT.l5.kepler, 5));
 
     const ans = answer({ kind: 'info', title: '', text: '' });
+    // At level 2 the story step says the same thing in more words, so the answer waits until level 3.
+    layers.gateFn(() => { ans.el.hidden = layers.level() === 2; });
 
     panelA.append(el('div', { class: 'orb-stack' },
       question(TEXT.l1.question, TEXT.l1.sub),
