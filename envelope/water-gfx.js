@@ -81,7 +81,7 @@ export function createGfx(stage) {
   if (hemi) { hemi.intensity = theme.dark ? 0.5 : 0.42; hemi.color.set('#f2f6ff'); hemi.groundColor.set('#a9a393'); }
   if (fill) { fill.intensity = 0.34; fill.color.set('#fff3e2'); }
   if (key) { key.color.set('#fff6e8'); key.intensity = 3.3; key.castShadow = !!R; stage.scene.add(key.target); }
-  const floorMat = new T.ShadowMaterial({ opacity: theme.dark ? 0.5 : 0.24, color: 0x101216, depthWrite: false });
+  const floorMat = new T.ShadowMaterial({ opacity: theme.dark ? 0.32 : 0.12, color: 0x101216, depthWrite: false });
   const floor = new T.Mesh(new T.PlaneGeometry(900, 900), floorMat);
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; floor.raycast = () => {};
   stage.scene.add(floor);
@@ -148,7 +148,7 @@ export function createGfx(stage) {
     stucco: () => look('stucco'),
     eifs: () => { const m = look('stucco'); m.color.set('#f1ebdd'); m.roughness = 0.92; m.bumpScale = 0.7; return m; },
     // housewrap: white, printed, sheet thin enough to be seen from both sides
-    wrb: () => { const m = look('wrb'); m.side = T.DoubleSide; m.roughness = 0.62; return m; },
+    wrb: () => { const m = look('wrb'); m.side = T.DoubleSide; m.roughness = 0.7; m.color && m.color.multiplyScalar(0.72); m.envMapIntensity = 0.5; return m; },
     // seam tape on housewrap: bright foil
     tape: () => std({ color: '#d9dde1', metalness: 0.55, roughness: 0.34, envMapIntensity: 1.2, side: T.DoubleSide }),
     // sheet metal
@@ -281,6 +281,18 @@ export function createGfx(stage) {
     g.add(grp);
     return grp;
   }
+  // wet darkening and gloss on rain-exposed cladding
+  const WET = ['brick', 'fibercement', 'eifs', 'stucco', 'vinyl'];
+  function setWet(k) {
+    WET.forEach((key) => {
+      const m = mats.get(key);
+      if (!m) return;
+      if (!m.userData.dry) m.userData.dry = { c: m.color.clone(), r: m.roughness };
+      m.color.copy(m.userData.dry.c).multiplyScalar(1 - 0.1 * k);
+      m.roughness = m.userData.dry.r * (1 - 0.4 * k);
+    });
+    stage.requestRender();
+  }
   function cachedGeo(name, make) {
     let g = geoCache.get(name);
     if (!g) { g = make(); geoCache.set(name, g); }
@@ -306,6 +318,6 @@ export function createGfx(stage) {
   }
 
   return {
-    T, M, variant, box, slab, prism, ribbon, finish, cachedGeo, disposeTree, fitLight, shadowDirty, dispose, floor, key,
+    T, M, variant, box, slab, prism, ribbon, finish, cachedGeo, disposeTree, fitLight, shadowDirty, setWet, dispose, floor, key,
   };
 }

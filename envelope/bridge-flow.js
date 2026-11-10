@@ -116,11 +116,17 @@ export function streamlines(r, climate, count) {
     let f;
     if (hotIn) f = Math.abs(climate.tIn - r.interiorSurface[i]) / 0.68;
     else f = Math.abs(qj[(ny - 1) * nx + i]);
-    w[i] = Math.pow(Math.max(f, 1e-6), 0.72);
+    w[i] = Math.pow(Math.max(f, 1e-6), 0.6);
     tot += w[i];
   }
   const lines = [];
   const ds = 0.45;
+  let fluxSum = 0;
+  for (let i = 0; i < nx; i++) {
+    const f = hotIn ? Math.abs(climate.tIn - r.interiorSurface[i]) / 0.68 : Math.abs(qj[(ny - 1) * nx + i]);
+    fluxSum += f * r.cell;
+  }
+  lines.share = fluxSum / count;     // heat carried by one line, per inch of depth
   for (let m = 0; m < count; m++) {
     const target = ((m + 0.5) / count) * tot;
     let acc = 0; let a = nx / 2;
@@ -178,7 +184,7 @@ void main() {
   float lat = abs(vV) * (hw + uHalo);
   float x = mod(vS - uTime * uSpeed, P);
   // shaft and head, as signed "inside" distances (positive inside)
-  float shaft = min(0.30 * hw - lat, min(x - 0.05 * P, 0.66 * P - x));
+  float shaft = min(0.34 * hw - lat, min(x - 0.05 * P, 0.66 * P - x));
   float headW = hw * (0.98 * P - x) / (0.36 * P);
   float head = min(headW - lat, min(x - 0.62 * P, 0.98 * P - x));
   float core = max(shaft, head);
@@ -199,6 +205,7 @@ export function createArrows(model, r, climate, opts = {}) {
   const halo = period * 0.05;
   // reference flux: clear wall
   const qRef = Math.max(1e-6, Math.abs(r.qClear));
+  const share = lines.share || 1;
   const pos = []; const aS = []; const aV = []; const aW = []; const idx = [];
   const OFF = opts.offset || 0.12;
   lines.forEach((pts) => {
@@ -222,7 +229,11 @@ export function createArrows(model, r, climate, opts = {}) {
       const prev = keep[Math.max(0, n - 1)].p; const next = keep[Math.min(keep.length - 1, n + 1)].p;
       const t = next.clone().sub(prev).normalize();
       const perp = new THREE.Vector3().crossVectors(model.normalOut, t).normalize();
-      const hw = period * 0.2 * Math.min(2.1, Math.max(0.55, 0.8 * Math.sqrt(sm[n] / qRef)));
+      // heavier where the heat flux is high, but never wider than the room between neighbouring lines
+      const hw0 = period * 0.085;
+      let hw = hw0 * Math.min(1.9, Math.max(0.7, 0.7 + 0.5 * Math.sqrt(sm[n] / qRef)));
+      const tube = share / Math.max(sm[n], 1e-9);
+      hw = Math.max(hw0 * 0.35, Math.min(hw, 0.5 * tube));
       const ext = hw + halo;
       [-1, 1].forEach((sgn) => {
         const v = q.p.clone().addScaledVector(perp, sgn * ext);

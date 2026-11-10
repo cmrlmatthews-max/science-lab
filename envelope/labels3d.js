@@ -46,9 +46,9 @@ function drawPill(canvas, lines, th, o) {
   const lh = Math.round(fs * 1.28);
   const dotW = o.dot ? 14 : 0;
   const ctx = canvas.getContext('2d');
-  const font = (k) => `${k === 0 ? 500 : 400} ${(k === 0 ? fs : fs - 1) * S}px ${FONT}`;
+  const font = (k) => `${k === 0 ? 500 : 400} ${k === 0 ? fs : fs - 1}px ${FONT}`;
   let tw = 0;
-  lines.forEach((t, k) => { ctx.font = font(k); tw = Math.max(tw, ctx.measureText(t).width / S); });
+  lines.forEach((t, k) => { ctx.font = font(k); tw = Math.max(tw, ctx.measureText(t).width); });
   const w = Math.ceil(tw + padX * 2 + dotW) + 2;
   const h = Math.ceil(lh * lines.length + padY * 2) + 2;
   canvas.width = Math.ceil(w * S);
@@ -185,6 +185,7 @@ export function createCallout(stage, opts = {}) {
     const th = themeOf(stage);
     const lines = text.split('\n');
     const dims = drawPill(canvas, lines, th, { fontPx, padX: 8, padY: 4.5, active });
+    tex.dispose(); // the canvas size can change, and a GL texture keeps its first size
     tex.needsUpdate = true;
     size = dims;
     label.userData.px.w = dims.w; label.userData.px.h = dims.h;
@@ -275,7 +276,7 @@ export function pickCallout(stage, clientX, clientY, callouts) {
 
 /**
  * A slightly larger quiet tag with a small colored dot, used for "Inside" and "Outside".
- * opts: { text, position: Vector3, tone: 'warm'|'cold', align?: 'center'|'left'|'right', parent? }
+ * opts: { text, position: Vector3, tone: 'warm'|'cold'|'none', align?: 'center'|'left'|'right', fontPx? (default 13.5), parent? }
  */
 export function createSideMarker(stage, opts = {}) {
   const parent = opts.parent || stage.scene;
@@ -292,9 +293,11 @@ export function createSideMarker(stage, opts = {}) {
   let text = String(opts.text || '');
   let tone = opts.tone || 'warm';
   let align = opts.align || 'center';
+  let fontPx = opts.fontPx || 13.5;
   function paint() {
     const th = themeOf(stage);
-    const dims = drawPill(canvas, [text], th, { fontPx: 13.5, padX: 10, padY: 6, dot: tone === 'warm' ? WARM : COLD });
+    tex.dispose();
+    const dims = drawPill(canvas, [text], th, { fontPx: fontPx, padX: fontPx > 13 ? 10 : 8, padY: fontPx > 13 ? 6 : 5, dot: tone === 'warm' ? WARM : tone === 'cold' ? COLD : null });
     tex.needsUpdate = true;
     sp.userData.px.w = dims.w; sp.userData.px.h = dims.h;
     sp.center.set(align === 'left' ? 0 : align === 'right' ? 1 : 0.5, 0.5);
@@ -308,6 +311,7 @@ export function createSideMarker(stage, opts = {}) {
     userData: sp.userData,
     setText(t) { text = String(t); paint(); },
     setTone(t) { tone = t; paint(); },
+    setFont(px) { if (px !== fontPx) { fontPx = px; paint(); } },
     setPosition(v) { sp.position.copy(v); stage.requestRender(); },
     setVisible(b) { sp.visible = !!b; stage.requestRender(); },
     dispose() {
@@ -324,11 +328,13 @@ const _fwd = new THREE.Vector3();
 /**
  * Nudge label offsets so labels do not overlap on screen (vertical push; the sideways position is kept).
  * Call after the camera has settled or the layout changed, not every frame.
- * opts: { gap = 4 (px between labels), margin = 6 (px from the canvas edge) }
+ * opts: { gap = 4 (px between labels), margin = 6 (px from the canvas edge), top = margin (px kept free at the top, for an overlay), bottom = margin }
  */
 export function layoutCallouts(callouts, stage, opts = {}) {
   const gap = opts.gap ?? 4;
   const margin = opts.margin ?? 6;
+  const top = opts.top ?? margin;
+  const bottomMargin = opts.bottom ?? margin;
   const cam = stage.camera;
   const dom = stage.renderer && stage.renderer.domElement;
   if (!dom) return;
@@ -346,20 +352,30 @@ export function layoutCallouts(callouts, stage, opts = {}) {
     const sa = a.c.clientRect(); const sb = b.c.clientRect();
     return sa.left < sb.right + 4 && sb.left < sa.right + 4;
   };
-  for (let k = 1; k < items.length; k += 1) {
-    for (let j = k - 1; j >= 0; j -= 1) {
-      if (!overlapX(items[j], items[k])) continue;
-      const min = items[j].y + (items[j].h + items[k].h) / 2 + gap;
-      if (items[k].y < min) items[k].y = min;
+  const pushDown = () => {
+    for (let k = 1; k < items.length; k += 1) {
+      for (let j = k - 1; j >= 0; j -= 1) {
+        if (!overlapX(items[j], items[k])) continue;
+        const min = items[j].y + (items[j].h + items[k].h) / 2 + gap;
+        if (items[k].y < min) items[k].y = min;
+      }
     }
-  }
-  // keep inside the canvas: shift the whole bottom group up if it overflows
-  const bottom = r.height - margin;
-  for (let k = items.length - 1; k >= 0; k -= 1) {
-    const maxY = (k === items.length - 1 ? bottom : items[k + 1].y - (items[k].h + items[k + 1].h) / 2 - gap) - items[k].h / 2;
-    if (items[k].y > maxY) items[k].y = maxY;
-  }
-  items.forEach((it) => { if (it.y < margin + it.h / 2) it.y = margin + it.h / 2; });
+  };
+  const pushUp = (limit) => {
+    for (let k = items.length - 1; k >= 0; k -= 1) {
+      let maxY = limit - items[k].h / 2;
+      for (let j = k + 1; j < items.length; j += 1) {
+        if (!overlapX(items[k], items[j])) continue;
+        maxY = Math.min(maxY, items[j].y - (items[k].h + items[j].h) / 2 - gap);
+      }
+      if (items[k].y > maxY) items[k].y = maxY;
+    }
+  };
+  items.forEach((it) => { if (it.y < top + it.h / 2) it.y = top + it.h / 2; });
+  pushDown();
+  pushUp(r.height - bottomMargin);
+  items.forEach((it) => { if (it.y < top + it.h / 2) it.y = top + it.h / 2; });
+  pushDown();
   cam.getWorldDirection(_fwd);
   items.forEach((it) => {
     if (Math.abs(it.y - it.y0) < 0.5) return;

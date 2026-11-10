@@ -1,537 +1,862 @@
-// envelope/bridge-scene.js  3D cut model for the Thermal Bridge mode (Part E).
-// Builds a block from a solveBridge() result: a flat cut face that carries the
-// temperature or material map, plus a body extruded behind it.
+// envelope/bridge-scene.js  3D side-by-side mock-ups for the Thermal Bridge mode (Envelope Lab).
+// Two true-to-scale details (the problem and the better version) built from real parts, both cut open, with the
+// solved temperature field drawn on the cut face, heat-flow arrows, names on every part and a coldest-surface marker.
 //
-// Scene axes (1 unit = 1 inch): x along the wall, y up, z through the wall.
-// Interior face at z = 0, exterior at +z.
-//   'plan' details (stud):    grid plane is horizontal. x = i * cell, z = j * cell.
-//                             The cut face is the TOP of the block (y = top).
-//   'section' details:        grid plane is vertical. y = i * cell (i = 0 at the bottom),
-//                             z = j * cell. The cut face is the END of the block at -x,
-//                             so a camera on the exterior side looks at it with the
-//                             interior on the left and the exterior on the right.
+// Scene axes (1 unit = 1 inch): x along the wall, y up, z through the wall; interior face at z = 0, exterior at +z.
+// Parts are built by envelope/bridge-model.js, arrows by envelope/bridge-flow.js, callouts by envelope/labels3d.js.
 //
-// Texture rule: canvas pixel (i, j) is cell (i, j). flipY is false, so uv = (i / nx, j / ny).
+// Camera moves only in frame() (mount, detail change, layout change, reset). Hover, select and toggles never move it.
 
-import { THREE, makeLabelSprite, tempToCss } from '../shared/scene.js';
+import * as THREE from 'three';
+import { RoomEnvironment } from '../vendor/addons/RoomEnvironment.js';
+import { tempToCss } from '../shared/scene.js';
+import { createCallout, createSideMarker, pickCallout, worldToClient } from './labels3d.js';
+import { createLookBank } from './bridge-parts.js';
+import { buildModel, boundarySegments, PLAN_H, LX, S_IN, S_OUT } from './bridge-model.js';
+import { createArrows } from './bridge-flow.js';
 
-const PLAN_HEIGHT = 20;     // inches the stud block is extruded downward
-const SECTION_LENGTH = 24;  // inches the section blocks are extruded along x
-const EPS_FACE = 0.04;      // cut plane sits this far in front of the body
-const EPS_LINE = 0.09;      // outline lines sit this far in front of the body
+const EPS_FACE = 0.05;
+const EPS_LINE = 0.09;
+const EPS_IFACE = 0.05;
+const GAP_PLAN = 14;
+const GAP_SECTION = 7;
 
-// ---------------------------------------------------------------- helpers
+const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
 function disposeObject(o) {
   o.traverse((n) => {
     if (n.geometry) n.geometry.dispose();
     const ms = n.material ? (Array.isArray(n.material) ? n.material : [n.material]) : [];
-    ms.forEach((m) => {
-      if (m.map) m.map.dispose();
-      m.dispose();
-    });
+    ms.forEach((m) => { if (m.map && m.map.userData && m.map.userData.own) m.map.dispose(); m.dispose(); });
   });
 }
 
-// Greedy rectangle merge of equal-material cells. Returns [{m, i0, i1, j0, j1}] (half open).
-function mergeRects(mats, nx, ny) {
-  const seen = new Uint8Array(nx * ny);
-  const out = [];
-  for (let j = 0; j < ny; j++) {
-    for (let i = 0; i < nx; i++) {
-      const p = j * nx + i;
-      if (seen[p]) continue;
-      const m = mats[p];
-      let i1 = i + 1;
-      while (i1 < nx && !seen[j * nx + i1] && mats[j * nx + i1] === m) i1++;
-      let j1 = j + 1;
-      for (; j1 < ny; j1++) {
-        let ok = true;
-        for (let ii = i; ii < i1; ii++) {
-          const q = j1 * nx + ii;
-          if (seen[q] || mats[q] !== m) { ok = false; break; }
-        }
-        if (!ok) break;
-      }
-      for (let jj = j; jj < j1; jj++) for (let ii = i; ii < i1; ii++) seen[jj * nx + ii] = 1;
-      out.push({ m, i0: i, i1, j0: j, j1 });
-    }
-  }
-  return out;
+function canvasTexture(w, h, linear = true) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.flipY = false;
+  t.generateMipmaps = false;
+  t.minFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
+  t.magFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.userData.own = true;
+  return t;
 }
 
-// One merged geometry from a list of boxes {cx,cy,cz,sx,sy,sz}.
-function boxesGeometry(boxes) {
-  const tpl = new THREE.BoxGeometry(1, 1, 1);
-  const tp = tpl.attributes.position.array;
-  const tn = tpl.attributes.normal.array;
-  const ti = tpl.index.array;
-  const vcount = tp.length / 3;
-  const pos = new Float32Array(boxes.length * tp.length);
-  const nor = new Float32Array(boxes.length * tn.length);
-  const idx = new Uint32Array(boxes.length * ti.length);
-  boxes.forEach((b, n) => {
-    for (let v = 0; v < vcount; v++) {
-      const o = n * tp.length + v * 3;
-      pos[o] = tp[v * 3] * b.sx + b.cx;
-      pos[o + 1] = tp[v * 3 + 1] * b.sy + b.cy;
-      pos[o + 2] = tp[v * 3 + 2] * b.sz + b.cz;
-      nor[o] = tn[v * 3]; nor[o + 1] = tn[v * 3 + 1]; nor[o + 2] = tn[v * 3 + 2];
+function makeColorizer(lo, hi) {
+  const cache = new Map();
+  return (t) => {
+    const key = Math.round(t * 4);
+    let rgb = cache.get(key);
+    if (!rgb) {
+      const m = /(\d+), (\d+), (\d+)/.exec(tempToCss(key / 4, lo, hi));
+      rgb = [+m[1], +m[2], +m[3]];
+      cache.set(key, rgb);
     }
-    for (let k = 0; k < ti.length; k++) idx[n * ti.length + k] = ti[k] + n * vcount;
-  });
-  tpl.dispose();
+    return rgb;
+  };
+}
+
+function quad(p00, p10, p01, p11, uv) {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.setAttribute('position', new THREE.Float32BufferAttribute([...p00.toArray(), ...p10.toArray(), ...p01.toArray(), ...p11.toArray()], 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv || [0, 0, 1, 0, 0, 1, 1, 1], 2));
+  g.setIndex([0, 1, 2, 1, 3, 2]);
   return g;
 }
 
-// Boundary segments between different materials (and the outer rim), merged into
-// straight runs. Each is [a0, b0, a1, b1] in cell-edge coordinates (a = i axis, b = j axis).
-function boundarySegments(mats, nx, ny) {
-  const segs = [];
-  // vertical edges at a = i (between cell i-1 and i), running along b
-  for (let i = 0; i <= nx; i++) {
-    let start = -1;
-    for (let j = 0; j <= ny; j++) {
-      let edge = false;
-      if (j < ny) {
-        const l = i > 0 ? mats[j * nx + i - 1] : -1;
-        const r = i < nx ? mats[j * nx + i] : -1;
-        edge = l !== r;
-      }
-      if (edge && start < 0) start = j;
-      if (!edge && start >= 0) { segs.push([i, start, i, j]); start = -1; }
-    }
-  }
-  // horizontal edges at b = j, running along a
-  for (let j = 0; j <= ny; j++) {
-    let start = -1;
-    for (let i = 0; i <= nx; i++) {
-      let edge = false;
-      if (i < nx) {
-        const u = j > 0 ? mats[(j - 1) * nx + i] : -1;
-        const d = j < ny ? mats[j * nx + i] : -1;
-        edge = u !== d;
-      }
-      if (edge && start < 0) start = i;
-      if (!edge && start >= 0) { segs.push([start, j, i, j]); start = -1; }
-    }
-  }
-  return segs;
-}
-
-function hexMix(hex, toward, k) {
-  const a = new THREE.Color(hex);
-  return a.lerp(new THREE.Color(toward), k);
-}
-
-// ---------------------------------------------------------------- scene
 /**
  * @param {object} stage from createStage()
- * @returns {object} controller
+ * @param {HTMLElement} stageEl element that holds the canvas (overlays are added to it)
  */
-export function createBridgeScene(stage) {
+export function createBridgeScene(stage, stageEl) {
+  const R = stage.renderer;
   const root = new THREE.Group();
   stage.scene.add(root);
-  const geo = new THREE.Group();     // rebuilt on detail or variant change
-  const dyn = new THREE.Group();     // labels and marker, rebuilt when climate changes
-  root.add(geo, dyn);
+  const bank = createLookBank(() => stage.requestRender());
+  const sides = [null, null];
 
   const st = {
-    result: null,
+    detailId: null,
+    show: 'heat',
+    arrows: true,
+    labels: true,
+    single: null,         // null = both, 0 or 1 = only that side (phone)
     climate: null,
-    view: 'temp',
-    arrows: false,
-    cutMat: null,
-    tempTex: null,
-    matTex: null,
-    bodyMeshes: [],
-    arrowGroup: null,
-    L: null,        // layout info
-    labels: [],
+    results: [null, null],
+    titles: ['', ''],
+    hoverInfo: null,      // { side, infoId }
+    userMoved: false,
+    stopArrows: null,
+    t0: performance.now(),
+    framedFor: '',
+    gapPlan: GAP_PLAN,
   };
 
-  // ---- mapping from grid coordinates to world
-  function layout(r) {
-    const c = r.cell;
-    const W = r.nx * c;
-    const D = r.ny * c;
-    if (r.orientation === 'plan') {
-      const H = PLAN_HEIGHT;
-      return {
-        plan: true, c, W, D, H,
-        // point on the cut plane for cell-edge coords (a, b), pushed out by `off`
-        P: (a, b, off = 0) => new THREE.Vector3((a - r.nx / 2) * c, H + off, b * c),
-        // same point on the far end of the extrusion
-        Pfar: (a, b) => new THREE.Vector3((a - r.nx / 2) * c, 0, b * c),
-        out: new THREE.Vector3(0, 1, 0),
-        center: new THREE.Vector3(0, H / 2, D / 2),
-        dirVec: (qi, qj) => new THREE.Vector3(qi, 0, qj),
-        cellCenter: (i, j, off = 0) => new THREE.Vector3((i + 0.5 - r.nx / 2) * c, H + off, (j + 0.5) * c),
-      };
+  // ---------------------------------------------------------------- lighting like the Assembly wall
+  const prevEnv = stage.scene.environment;
+  let envRT = null; let key = null; let hemi = null; let fill = null;
+  if (R) {
+    R.toneMapping = THREE.ACESFilmicToneMapping;
+    R.toneMappingExposure = 0.9;
+    R.outputColorSpace = THREE.SRGBColorSpace;
+    R.shadowMap.enabled = true;
+    R.shadowMap.type = THREE.PCFSoftShadowMap;
+    R.shadowMap.autoUpdate = false;
+    const pm = new THREE.PMREMGenerator(R);
+    const room = new RoomEnvironment();
+    envRT = pm.fromScene(room, 0.04);
+    room.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    pm.dispose();
+    stage.scene.environment = envRT.texture;
+    stage.scene.environmentIntensity = 0.5;
+  }
+  stage.scene.traverse((o) => {
+    if (o.isHemisphereLight) hemi = o;
+    else if (o.isDirectionalLight) { if (!key) key = o; else if (!fill) fill = o; }
+  });
+  if (hemi) { hemi.intensity = 0.45; hemi.color.set('#f2f6ff'); hemi.groundColor.set('#a9a393'); }
+  if (fill) { fill.intensity = 0.4; fill.color.set('#fff3e2'); }
+  if (key) {
+    key.color.set('#fff6e8');
+    key.intensity = 3.0;
+    key.castShadow = !!R;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.0003;
+    key.shadow.normalBias = 0.05;
+    stage.scene.add(key.target);
+  }
+  const shadowDirty = () => { if (R) R.shadowMap.needsUpdate = true; stage.requestRender(); };
+  const floorMat = new THREE.ShadowMaterial({ opacity: stage.theme.dark ? 0.5 : 0.2, color: 0x101216, depthWrite: false });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), floorMat);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -0.05; floor.receiveShadow = true; floor.raycast = () => {};
+  root.add(floor);
+
+  // ---------------------------------------------------------------- DOM overlays (titles)
+  const overlay = document.createElement('div');
+  overlay.className = 'bt-overlay';
+  stageEl.appendChild(overlay);
+  const titleEls = [0, 1].map((k) => {
+    const d = document.createElement('div');
+    d.className = 'bt-title';
+    d.dataset.side = k === 0 ? 'problem' : 'better';
+    const b = document.createElement('span'); b.className = 'bt-badge'; b.textContent = k === 0 ? 'Problem' : 'Better';
+    const t = document.createElement('span'); t.className = 'bt-title-text';
+    d.append(b, t);
+    overlay.appendChild(d);
+    return { root: d, text: t };
+  });
+
+  // ---------------------------------------------------------------- helpers
+  const visibleSides = () => sides.map((s, k) => (s && (st.single == null || st.single === k) ? k : -1)).filter((k) => k >= 0);
+
+  function slotOffset(k) {
+    const s = sides[k];
+    if (!s) return new THREE.Vector3();
+    const plan = s.model.plan;
+    const both = st.single == null;
+    if (plan) {
+      const w = (s.r.nx * s.r.cell);
+      const x = both ? (k === 0 ? 1 : -1) * (w + st.gapPlan) / 2 : 0;   // the camera looks along +z, so screen right is -x
+      return new THREE.Vector3(x, 0, 0);
     }
-    const Lx = SECTION_LENGTH;
-    return {
-      plan: false, c, W, D, H: W, Lx,
-      P: (a, b, off = 0) => new THREE.Vector3(-Lx / 2 - off, a * c, b * c),
-      Pfar: (a, b) => new THREE.Vector3(Lx / 2, a * c, b * c),
-      out: new THREE.Vector3(-1, 0, 0),
-      center: new THREE.Vector3(0, W / 2, D / 2),
-      dirVec: (qi, qj) => new THREE.Vector3(0, qi, qj),
-      cellCenter: (i, j, off = 0) => new THREE.Vector3(-Lx / 2 - off, (i + 0.5) * c, (j + 0.5) * c),
+    const zmin = -S_IN; const zmax = s.r.depthIn + (s.r.detailId === 'slab' ? S_OUT : 0);
+    const w = zmax - zmin;
+    const cz = (zmin + zmax) / 2;
+    const z = both ? (k === 0 ? -1 : 1) * (w + GAP_SECTION) / 2 - cz : -cz;
+    return new THREE.Vector3(0, 0, z);
+  }
+
+  /** Anchor of a label in the group's local frame. Plan labels sit at the model edge that faces the label column. */
+  function anchorFor(k, spec) {
+    const a = spec.anchor.clone();
+    if (spec.edge) {
+      const half = sides[k].r.nx * sides[k].r.cell / 2;
+      const sgn = st.single == null ? (k === 0 ? -1 : 1) : -1;     // screen right is -x (the camera looks along +z)
+      a.x = sgn * (half - 1.4);
+    }
+    return a;
+  }
+
+  function worldBox(k) {
+    const s = sides[k];
+    const b = s.model.box.clone();
+    b.translate(s.group.position);
+    return b;
+  }
+
+  // ---------------------------------------------------------------- build one side
+  function disposeSide(k) {
+    const s = sides[k];
+    if (!s) return;
+    if (s.arrows) { s.arrows.dispose(); }
+    s.callouts.forEach((c) => c.api.dispose());
+    s.markers.forEach((m) => m.dispose());
+    if (s.cold) s.cold.dispose();
+    root.remove(s.group);
+    disposeObject(s.group);
+    [s.heatTex, s.ifaceTex, ...s.ctx.map((c) => c.tex)].forEach((t) => t && t.dispose());
+    sides[k] = null;
+  }
+
+  function buildSide(k, r) {
+    disposeSide(k);
+    const model = buildModel(r);
+    const group = new THREE.Group();
+    root.add(group);
+    const s = {
+      k, r, model, group, callouts: [], markers: [], cold: null, ctx: [], pickables: [], arrows: null,
+      heatTex: null, heatMat: null, heatMesh: null, ifaceTex: null, ifaceMat: null, lines: null, lineMat: null,
     };
-  }
-
-  // ---- textures
-  function makeCanvasTexture(canvas, linear) {
-    const t = new THREE.CanvasTexture(canvas);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.flipY = false;
-    t.generateMinmaps = false;
-    t.generateMipmaps = false;
-    t.minFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
-    t.magFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
-    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-    return t;
-  }
-
-  function paintTemps(r, climate) {
+    sides[k] = s;
     const { nx, ny } = r;
-    const cv = st.tempTex.image;
-    const ctx = cv.getContext('2d');
-    const img = ctx.createImageData(nx, ny);
-    const lo = Math.min(climate.tIn, climate.tOut);
-    const hi = Math.max(climate.tIn, climate.tOut);
-    // cache css->rgb for speed: quantize to 0.25 F
-    const cache = new Map();
-    for (let p = 0; p < nx * ny; p++) {
-      const key = Math.round(r.temps[p] * 4);
-      let rgb = cache.get(key);
-      if (!rgb) {
-        const m = /(\d+), (\d+), (\d+)/.exec(tempToCss(key / 4, lo, hi));
-        rgb = [+m[1], +m[2], +m[3]];
-        cache.set(key, rgb);
-      }
-      img.data[p * 4] = rgb[0]; img.data[p * 4 + 1] = rgb[1]; img.data[p * 4 + 2] = rgb[2]; img.data[p * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    st.tempTex.needsUpdate = true;
-  }
 
-  function paintMats(r) {
-    const { nx, ny } = r;
-    const cv = st.matTex.image;
-    const ctx = cv.getContext('2d');
-    const img = ctx.createImageData(nx, ny);
-    const rgbS = r.palette.map((p) => {
-      const n = parseInt(p.color.slice(1), 16);
-      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    // parts
+    model.mesher.geometries().forEach(({ id, geometry }) => {
+      const m = new THREE.Mesh(geometry, bank.material(id));
+      m.castShadow = id !== 'airspace';
+      m.receiveShadow = id !== 'airspace';
+      m.raycast = () => {};
+      group.add(m);
     });
+
+    // outlines of material boundaries on the cut face
+    const segs = boundarySegments(r.mats, nx, ny);
+    const pts = [];
+    segs.forEach(([a0, b0, a1, b1]) => {
+      const p = model.P(a0, b0, EPS_LINE); const q = model.P(a1, b1, EPS_LINE);
+      pts.push(p.x, p.y, p.z, q.x, q.y, q.z);
+    });
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    s.lineMat = new THREE.LineBasicMaterial({ color: 0x12151a, transparent: true, opacity: 0.5, toneMapped: false });
+    s.lines = new THREE.LineSegments(lg, s.lineMat);
+    s.lines.raycast = () => {};
+    s.lines.renderOrder = 4;
+    group.add(s.lines);
+
+    // heat map on the cut face
+    s.heatTex = canvasTexture(nx, ny, true);
+    s.heatMat = new THREE.MeshBasicMaterial({ map: s.heatTex, side: THREE.DoubleSide, toneMapped: false, transparent: true, depthWrite: false });
+    const cutGeo = quad(model.P(0, 0, EPS_FACE), model.P(nx, 0, EPS_FACE), model.P(0, ny, EPS_FACE), model.P(nx, ny, EPS_FACE));
+    s.heatMesh = new THREE.Mesh(cutGeo, s.heatMat);
+    s.heatMesh.renderOrder = 2;
+    s.heatMesh.raycast = () => {};
+    group.add(s.heatMesh);
+    // invisible twin used for picking (works in every Show mode)
+    const pick = new THREE.Mesh(cutGeo.clone(), new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }));
+    pick.userData = { side: k, kind: 'cut' };
+    group.add(pick);
+    s.pickables.push(pick);
+
+    // interior surface strip on the room face (z = 0)
+    s.ifaceTex = canvasTexture(nx, 1, true);
+    s.ifaceMat = new THREE.MeshBasicMaterial({ map: s.ifaceTex, side: THREE.DoubleSide, toneMapped: false, transparent: true, depthWrite: false });
+    const ifp = (a, t) => (model.plan
+      ? new THREE.Vector3((a - nx / 2) * r.cell, t * PLAN_H, -EPS_IFACE)
+      : new THREE.Vector3(t * LX, a * r.cell, -EPS_IFACE));
+    const ifaceGeo = quad(ifp(0, 0), ifp(nx, 0), ifp(0, 1), ifp(nx, 1), [0, 0.5, 1, 0.5, 0, 0.5, 1, 0.5]);
+    const iface = new THREE.Mesh(ifaceGeo, s.ifaceMat);
+    iface.renderOrder = 2; iface.raycast = () => {};
+    group.add(iface);
+    s.iface = iface;
+
+    // context heat quads (not solved: fade from the edge temperature to the room or outdoor air)
+    model.contexts.forEach((cx) => {
+      const nz = 28;
+      const ny2 = Math.max(2, Math.round((cx.yHi - cx.yLo) / r.cell));
+      const tex = canvasTexture(ny2, nz, true);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false, transparent: true, depthWrite: false });
+      const p = (y, z) => new THREE.Vector3(-EPS_FACE, y, z);
+      const g = quad(p(cx.yLo, cx.z0), p(cx.yLo, cx.z1), p(cx.yHi, cx.z0), p(cx.yHi, cx.z1), [0, 0, 0, 1, 1, 0, 1, 1]);
+      const mesh = new THREE.Mesh(g, mat);
+      mesh.renderOrder = 2; mesh.raycast = () => {};
+      group.add(mesh);
+      const pk = new THREE.Mesh(g.clone(), new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }));
+      pk.userData = { side: k, kind: 'ctx', info: cx.info, ctx: cx };
+      group.add(pk);
+      s.pickables.push(pk);
+      // rim lines
+      const rim = new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints([
+          p(cx.yLo, cx.z0), p(cx.yLo, cx.z1), p(cx.yLo, cx.z1), p(cx.yHi, cx.z1),
+          p(cx.yHi, cx.z1), p(cx.yHi, cx.z0), p(cx.yHi, cx.z0), p(cx.yLo, cx.z0),
+        ].map((v) => { v.x = -EPS_LINE; return v; })),
+        s.lineMat,
+      );
+      rim.raycast = () => {}; rim.renderOrder = 4;
+      group.add(rim);
+      s.ctx.push({ cx, tex, mat, mesh, ny: ny2, nz, rim });
+    });
+
+    group.position.copy(slotOffset(k));
+    return s;
+  }
+
+  // ---------------------------------------------------------------- painting
+  function paintSide(s, climate) {
+    const { r } = s;
+    const { nx, ny } = r;
+    const lo = Math.min(climate.tIn, climate.tOut); const hi = Math.max(climate.tIn, climate.tOut);
+    const col = makeColorizer(lo, hi);
+    // cut face
+    const cv = s.heatTex.image; const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(nx, ny);
     for (let p = 0; p < nx * ny; p++) {
-      const c = rgbS[r.mats[p]];
+      const c = col(r.temps[p]);
       img.data[p * 4] = c[0]; img.data[p * 4 + 1] = c[1]; img.data[p * 4 + 2] = c[2]; img.data[p * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
-    st.matTex.needsUpdate = true;
-  }
-
-  // ---- body and cut face (rebuilt when detail or variant changes)
-  function bodyColor(hex) {
-    if (st.view === 'mats') return new THREE.Color(hex);
-    return hexMix(hex, stage.theme.dark ? '#3a372f' : '#d9d2bf', 0.62);
-  }
-
-  function restyleBody() {
-    st.bodyMeshes.forEach((m) => { m.material.color.copy(bodyColor(m.userData.hex)); });
-  }
-
-  function buildGeometry(r) {
-    // dispose the old
-    for (const ch of Array.from(geo.children)) { geo.remove(ch); disposeObject(ch); }
-    st.bodyMeshes = [];
-    st.arrowGroup = null;
-    if (st.tempTex) { st.tempTex.dispose(); st.tempTex = null; }
-    if (st.matTex) { st.matTex.dispose(); st.matTex = null; }
-
-    const L = layout(r);
-    st.L = L;
-    const { nx, ny, mats } = r;
-
-    // body: one merged mesh per material
-    const rects = mergeRects(mats, nx, ny);
-    const byMat = new Map();
-    rects.forEach((q) => { if (!byMat.has(q.m)) byMat.set(q.m, []); byMat.get(q.m).push(q); });
-    const c = L.c;
-    byMat.forEach((list, m) => {
-      const boxes = list.map((q) => {
-        const wa = (q.i1 - q.i0) * c;
-        const wb = (q.j1 - q.j0) * c;
-        const ca = (q.i0 + q.i1) / 2;
-        const cb = ((q.j0 + q.j1) / 2) * c;
-        if (L.plan) {
-          return { cx: (ca - nx / 2) * c, cy: L.H / 2, cz: cb, sx: wa, sy: L.H, sz: wb };
+    s.heatTex.needsUpdate = true;
+    // room face strip
+    const ic = s.ifaceTex.image.getContext('2d');
+    const ii = ic.createImageData(nx, 1);
+    for (let i = 0; i < nx; i++) {
+      const c = col(r.interiorSurface[i]);
+      ii.data[i * 4] = c[0]; ii.data[i * 4 + 1] = c[1]; ii.data[i * 4 + 2] = c[2]; ii.data[i * 4 + 3] = 255;
+    }
+    ic.putImageData(ii, 0, 0);
+    s.ifaceTex.needsUpdate = true;
+    // context pieces
+    s.ctx.forEach((q) => {
+      const { cx } = q;
+      const row = cx.side === 'in' ? 0 : ny - 1;
+      const far = cx.side === 'in' ? climate.tIn : climate.tOut;
+      const cc = q.tex.image.getContext('2d');
+      const im = cc.createImageData(q.ny, q.nz);
+      for (let a = 0; a < q.ny; a++) {
+        const y = cx.yLo + ((a + 0.5) / q.ny) * (cx.yHi - cx.yLo);
+        const fi = Math.min(nx - 1, Math.max(0, y / r.cell - 0.5));
+        const i0 = Math.floor(fi); const i1 = Math.min(nx - 1, i0 + 1); const tt = fi - i0;
+        const te = r.temps[row * nx + i0] * (1 - tt) + r.temps[row * nx + i1] * tt;
+        for (let b = 0; b < q.nz; b++) {
+          const z = cx.z0 + ((b + 0.5) / q.nz) * (cx.z1 - cx.z0);
+          const sdist = cx.side === 'in' ? -z : z - r.depthIn;
+          const T = far + (te - far) * Math.exp(-Math.max(0, sdist) / 4.5);
+          const c = col(T);
+          const o = (b * q.ny + a) * 4;
+          im.data[o] = c[0]; im.data[o + 1] = c[1]; im.data[o + 2] = c[2]; im.data[o + 3] = 255;
         }
-        return { cx: 0, cy: ca * c, cz: cb, sx: L.Lx, sy: wa, sz: wb };
-      });
-      const hex = r.palette[m].color;
-      const mat = new THREE.MeshStandardMaterial({ color: bodyColor(hex), roughness: 0.7, metalness: 0.05 });
-      const mesh = new THREE.Mesh(boxesGeometry(boxes), mat);
-      mesh.userData.hex = hex;
-      st.bodyMeshes.push(mesh);
-      geo.add(mesh);
+      }
+      cc.putImageData(im, 0, 0);
+      q.tex.needsUpdate = true;
     });
-
-    // outlines at material boundaries: cut face, far face and the extrusion corners
-    const segs = boundarySegments(mats, nx, ny);
-    const pts = [];
-    const ends = new Map();
-    const push = (v) => pts.push(v.x, v.y, v.z);
-    segs.forEach(([a0, b0, a1, b1]) => {
-      push(L.P(a0, b0, EPS_LINE)); push(L.P(a1, b1, EPS_LINE));
-      push(L.Pfar(a0, b0)); push(L.Pfar(a1, b1));
-      ends.set(`${a0},${b0}`, [a0, b0]);
-      ends.set(`${a1},${b1}`, [a1, b1]);
-    });
-    ends.forEach(([a, b]) => { push(L.P(a, b, EPS_LINE)); push(L.Pfar(a, b)); });
-    const lg = new THREE.BufferGeometry();
-    lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    const lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x14120e, transparent: true, opacity: 0.78 }));
-    geo.add(lines);
-
-    // cut face
-    st.tempTex = makeCanvasTexture(Object.assign(document.createElement('canvas'), { width: nx, height: ny }), true);
-    st.matTex = makeCanvasTexture(Object.assign(document.createElement('canvas'), { width: nx, height: ny }), false);
-    paintMats(r);
-    const quad = new THREE.BufferGeometry();
-    const p00 = L.P(0, 0, EPS_FACE), p10 = L.P(nx, 0, EPS_FACE), p01 = L.P(0, ny, EPS_FACE), p11 = L.P(nx, ny, EPS_FACE);
-    quad.setAttribute('position', new THREE.Float32BufferAttribute([...p00.toArray(), ...p10.toArray(), ...p01.toArray(), ...p11.toArray()], 3));
-    quad.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2));
-    quad.setIndex([0, 1, 2, 1, 3, 2]);
-    st.cutMat = new THREE.MeshBasicMaterial({ map: st.view === 'temp' ? st.tempTex : st.matTex, side: THREE.DoubleSide, toneMapped: false });
-    const cut = new THREE.Mesh(quad, st.cutMat);
-    cut.renderOrder = 1;
-    geo.add(cut);
   }
 
-  // ---- arrows
-  function fluxField(r) {
-    const { nx, ny, cell: c, temps, mats, palette } = r;
-    const k = (p) => palette[mats[p]].k;
-    // face flux between neighbours, exact for harmonic conductance
-    const qi = new Float32Array(nx * ny);
-    const qj = new Float32Array(nx * ny);
-    for (let j = 0; j < ny; j++) {
-      for (let i = 0; i < nx; i++) {
-        const p = j * nx + i;
-        let a = 0, na = 0, b = 0, nb = 0;
-        if (i > 0) { const q = p - 1; a += (temps[q] - temps[p]) / (c / 2 / k(q) + c / 2 / k(p)); na++; }
-        if (i < nx - 1) { const q = p + 1; a += (temps[p] - temps[q]) / (c / 2 / k(q) + c / 2 / k(p)); na++; }
-        if (j > 0) { const q = p - nx; b += (temps[q] - temps[p]) / (c / 2 / k(q) + c / 2 / k(p)); nb++; }
-        if (j < ny - 1) { const q = p + nx; b += (temps[p] - temps[q]) / (c / 2 / k(q) + c / 2 / k(p)); nb++; }
-        qi[p] = na ? a / na : 0;   // heat flowing toward +i
-        qj[p] = nb ? b / nb : 0;   // heat flowing toward +j (interior to exterior when warm inside)
+  function applyShow() {
+    const mode = st.show;
+    sides.forEach((s) => {
+      if (!s) return;
+      const heat = mode !== 'mats';
+      const op = mode === 'both' ? 0.55 : 1;
+      s.heatMesh.visible = heat;
+      s.heatMat.opacity = op;
+      s.iface.visible = heat;
+      s.ifaceMat.opacity = mode === 'both' ? 0.5 : 0.92;
+      s.ctx.forEach((q) => { q.mesh.visible = heat; q.mat.opacity = op; });
+      s.lineMat.opacity = mode === 'mats' ? 0.42 : mode === 'both' ? 0.6 : 0.5;
+    });
+    stage.requestRender();
+  }
+
+  // ---------------------------------------------------------------- arrows
+  function periodFor(s) {
+    return s.model.plan ? 2.0 : s.r.detailId === 'slab' ? 3.4 : 2.9;
+  }
+  function rebuildArrows(k) {
+    const s = sides[k];
+    if (!s) return;
+    if (s.arrows) { s.group.remove(s.arrows.group); s.arrows.dispose(); s.arrows = null; }
+    if (!st.arrows || !st.climate) { syncAnim(); return; }
+    const count = s.model.plan ? 12 : s.r.detailId === 'slab' ? 18 : 15;
+    s.arrows = createArrows(s.model, s.r, st.climate, { count, period: periodFor(s), offset: 0.14 });
+    s.arrows.group.visible = true;
+    s.group.add(s.arrows.group);
+    syncAnim();
+  }
+  function syncAnim() {
+    const want = st.arrows && !reduceMotion() && sides.some((s) => s && s.arrows && !s.arrows.empty);
+    if (want && !st.stopArrows) {
+      st.stopArrows = stage.onFrame((dt, t) => {
+        sides.forEach((s) => { if (s && s.arrows) s.arrows.update(t); });
+      });
+    } else if (!want && st.stopArrows) { st.stopArrows(); st.stopArrows = null; }
+  }
+
+  // ---------------------------------------------------------------- labels
+  const fmtF = (t) => `${t.toFixed(1).replace('-', '−')} °F`;
+  const rnd = (t) => `${Math.round(t)}`.replace('-', '−');
+
+  function coldText(r) {
+    return r.condensationRisk
+      ? `Coldest inside surface: ${fmtF(r.minInteriorT)}\nBelow dew point: water forms`
+      : `Coldest inside surface: ${fmtF(r.minInteriorT)}`;
+  }
+
+  function buildLabels(k) {
+    const s = sides[k];
+    if (!s) return;
+    s.callouts.forEach((c) => c.api.dispose());
+    s.markers.forEach((m) => m.dispose());
+    if (s.cold) s.cold.dispose();
+    s.callouts = []; s.markers = []; s.cold = null;
+    const off = s.group.position;
+    const model = s.model; const r = s.r;
+    const specs = model.labels.slice();
+    // part specific labels
+    const D = r.depthIn;
+    const stack = model.stack;
+    const zOf = (id) => { const m = model.idxOf(id); const q = stack.find((x) => x.m === m); return q ? ((q.j0 + q.j1) / 2) * r.cell : null; };
+    if (!model.plan) {
+      const slab = model.decor.slab;
+      specs.push({ text: 'Concrete slab', id: 'slab_edge', anchor: new THREE.Vector3(0, (slab.y0 + slab.y1) / 2, -S_IN * 0.55), place: 'roomSlab' });
+      if (r.detailId === 'slab') specs.push({ text: 'Balcony slab', id: 'balcony_slab', anchor: new THREE.Vector3(0, (slab.y0 + slab.y1) / 2, D + S_OUT * 0.5), place: 'balcony' });
+      if (model.breakInfo) {
+        const bb = model.breakInfo;
+        specs.push({ text: 'Thermal break', id: 'thermal_break_unit', anchor: new THREE.Vector3(0, ((bb.i0 + bb.i1) / 2) * r.cell, ((bb.j0 + bb.j1) / 2) * r.cell), place: 'top' });
+      }
+      if (r.detailId === 'shelf') {
+        const am = model.idxOf('steel');
+        const cb = model.cellBounds('steel');
+        if (am >= 0 && cb) {
+          const lbl = r.variantId === 'standoff' ? 'Standoff bracket' : 'Steel shelf angle';
+          specs.push({ text: lbl, id: r.variantId === 'standoff' ? 'standoff_bracket' : 'shelf_angle', anchor: new THREE.Vector3(0, (cb.i0 + 0.5) * r.cell, ((cb.j0 + cb.j1) / 2) * r.cell), place: 'top' });
+        }
       }
     }
-    return { qi, qj };
+    void zOf;
+    specs.forEach((sp) => {
+      const api = createCallout(stage, {
+        text: sp.text, id: sp.id, anchor: anchorFor(k, sp).add(off), offset: new THREE.Vector3(6, 4, 0), side: 'right', parent: root,
+      });
+      api.userData.place = sp.place || (model.plan ? 'side' : 'top');
+      api.userData.order = sp.order;
+      api.userData.side = k;
+      api.userData.spec = sp;
+      s.callouts.push({ api, spec: sp });
+    });
+    // coldest inside surface
+    s.cold = createCallout(stage, {
+      text: coldText(r), id: 'interior_surface_temp', anchor: model.coldAnchor.clone().add(off),
+      offset: new THREE.Vector3(0, -6, -10), side: 'right', parent: root, dotColor: r.condensationRisk ? '#c8261a' : '#1b44c8',
+    });
+    s.cold.userData.side = k;
+    s.cold.userData.cold = true;
+    // side markers
+    const mk = (text, tone) => createSideMarker(stage, { text, position: new THREE.Vector3(), tone, align: 'center', parent: root });
+    s.markers = [mk('Inside', 'warm'), mk('Outside', 'cold')];
   }
 
-  function pickSamples(r, mag, qRef) {
-    const { nx, ny } = r;
-    const s = Math.max(4, Math.sqrt((nx * ny) / 48));
+  function updateLabelText(k) {
+    const s = sides[k];
+    if (!s || !st.climate) return;
+    s.cold.setText(coldText(s.r));
+    s.cold.setDotColor(s.r.condensationRisk ? '#c8261a' : '#1b44c8');
+    s.cold.setAnchor(s.model.P(s.r.minInteriorAt + 0.5, 0, 0).add(s.group.position));
+    s.markers[0].setText(`Inside · ${rnd(st.climate.tIn)} °F`);
+    s.markers[1].setText(`Outside · ${rnd(st.climate.tOut)} °F`);
+    s.markers[0].setTone(st.climate.tIn >= st.climate.tOut ? 'warm' : 'cold');
+    s.markers[1].setTone(st.climate.tIn >= st.climate.tOut ? 'cold' : 'warm');
+  }
+
+  // screen helpers ----------------------------------------------------------
+  const _v = new THREE.Vector3();
+  const _fwd = new THREE.Vector3();
+  function canvasRect() { return stage.renderer.domElement.getBoundingClientRect(); }
+  function toPx(world) {
+    const r = canvasRect();
+    const p = worldToClient(stage, world);
+    return { x: p.x - r.left, y: p.y - r.top };
+  }
+  /** World point on the camera ray through canvas pixel (px, py) at the depth of `ref`. */
+  function pxToWorld(px, py, ref) {
+    const r = canvasRect();
+    const cam = stage.camera;
+    cam.updateMatrixWorld();
+    _v.set((px / r.width) * 2 - 1, -((py / r.height) * 2 - 1), 0.5).unproject(cam);
+    const dir = _v.sub(cam.position);
+    cam.getWorldDirection(_fwd);
+    const den = dir.dot(_fwd);
+    const t = ref.clone().sub(cam.position).dot(_fwd) / (den || 1e-6);
+    return cam.position.clone().addScaledVector(dir, t);
+  }
+
+  /** Arrange every label on screen (pixel rules), then convert to world offsets. Called after framing and layout changes. */
+  function placeLabels() {
+    const rect = canvasRect();
+    if (!rect.width) return;
+    const vis = visibleSides();
+    const bounds = [];
+    vis.forEach((k) => {
+      const s = sides[k];
+      const corners = [];
+      const b = worldBox(k);
+      [b.min.x, b.max.x].forEach((x) => [b.min.y, b.max.y].forEach((y) => [b.min.z, b.max.z].forEach((z) => corners.push(toPx(new THREE.Vector3(x, y, z))))));
+      const bb = {
+        x0: Math.min(...corners.map((c) => c.x)), x1: Math.max(...corners.map((c) => c.x)),
+        y0: Math.min(...corners.map((c) => c.y)), y1: Math.max(...corners.map((c) => c.y)),
+      };
+      bounds[k] = bb;
+    });
+    const TIER = 25;
+    // plan details: ONE column of names (between the two models, or beside a single model), a leader from each pill to every model
+    if (sides[vis[0]].model.plan) {
+      const both = vis.length === 2;
+      const names = new Map();
+      vis.forEach((k) => sides[k].callouts.forEach((c) => {
+        const a = toPx(c.api.object.position);
+        const e = names.get(c.api.text);
+        if (!e) names.set(c.api.text, { text: c.api.text, y: a.y, w: c.api.size.w, items: [c] });
+        else { e.items.push(c); e.y = Math.min(e.y, a.y); }
+      }));
+      const list = Array.from(names.values()).sort((x, y) => x.y - y.y);
+      let prev = -1e9;
+      list.forEach((it) => { it.ty = Math.max(it.y, prev + TIER); prev = it.ty; });
+      const shift = list.length ? list.reduce((m, it) => m + (it.y - it.ty), 0) / list.length : 0;
+      list.forEach((it) => { it.ty += shift * 0.55; });
+      const b0 = bounds[vis[0]]; const b1 = bounds[vis[vis.length - 1]];
+      list.forEach((it) => {
+        const cx = both ? (b0.x1 + b1.x0) / 2 : b0.x1 + 16 + it.w / 2;
+        it.items.forEach((c, n) => {
+          const ref = c.api.object.position;
+          c.api.setSide('right');
+          c.api.setOffset(pxToWorld(cx - it.w / 2, it.ty, ref).sub(ref));
+          c.api.userData.secondary = n > 0;
+        });
+      });
+    }
+    vis.forEach((k) => {
+      const s = sides[k];
+      const bb = bounds[k];
+      const own = s.callouts;
+      const hide = !st.labels;
+      own.forEach((c) => c.api.setVisible(!hide));
+      s.cold.setVisible(true);
+      const setPx = (api, px, py, side) => {
+        const ref = api.object.position;
+        api.setSide(side);
+        api.setOffset(pxToWorld(px, py, ref).sub(ref));
+      };
+      if (s.model.plan) {
+        const ca = toPx(s.cold.object.position);
+        const cw = s.cold.size.w;
+        setPx(s.cold, ca.x - cw / 2, bb.y1 + 20, 'right');
+        const front = toPx(s.model.P(s.r.nx / 2, 0, 0).add(s.group.position));
+        const back = toPx(s.model.P(s.r.nx / 2, s.r.ny, 0).add(s.group.position));
+        s.markers[0].setPosition(pxToWorld(front.x, bb.y1 + 56, s.cold.object.position));
+        s.markers[1].setPosition(pxToWorld(back.x, bb.y0 - 16, s.model.P(s.r.nx / 2, s.r.ny, 0).add(s.group.position)));
+        titleEls[k].anchor = { x: front.x, y: bb.y1 + 86 };
+        return;
+      }
+      // ----- section: one staircase of names above the first model (the second shows only what is new), specials around it
+      const first = sides[vis[0]];
+      own.forEach((c) => {
+        const dup = k !== vis[0] && first.callouts.some((o) => o.api.text === c.api.text);
+        c.api.userData.secondary = dup;
+        c.api.setVisible(!hide && !dup);
+      });
+      const topItems = own.filter((c) => c.api.userData.place === 'top' && !c.api.userData.secondary).map((c) => ({ c, a: toPx(c.api.object.position) })).sort((a, b) => a.a.x - b.a.x);
+      const n = topItems.length;
+      const T2 = 22;
+      topItems.forEach((it, idx) => {
+        const y = bb.y0 - 14 - (n - 1 - idx) * T2;
+        setPx(it.c.api, it.a.x - 4, y, 'right');
+      });
+      own.forEach((c) => {
+        const pl = c.api.userData.place;
+        if (pl === 'roomSlab') {
+          const stubTop = toPx(new THREE.Vector3(0, s.model.decor.floorTop, -S_IN).add(s.group.position));
+          setPx(c.api, stubTop.x + 2, stubTop.y - 30, 'right');
+        } else if (pl === 'balcony') {
+          const stubBot = toPx(new THREE.Vector3(0, s.model.decor.slab.y0, s.r.depthIn + S_OUT).add(s.group.position));
+          setPx(c.api, stubBot.x - 6, stubBot.y + 30, 'left');
+        }
+      });
+      const cold = toPx(s.cold.object.position);
+      setPx(s.cold, cold.x - 6, cold.y - 54, 'left');
+      const inP = toPx(new THREE.Vector3(0, 0, -S_IN).add(s.group.position));
+      const outP = toPx(new THREE.Vector3(0, 0, s.r.depthIn + (s.r.detailId === 'slab' ? S_OUT : 0)).add(s.group.position));
+      s.markers[0].setPosition(pxToWorld(inP.x + 46, bb.y1 + 16, new THREE.Vector3(0, 0, -S_IN).add(s.group.position)));
+      s.markers[1].setPosition(pxToWorld(outP.x - 50, bb.y1 + 16, new THREE.Vector3(0, 0, s.r.depthIn).add(s.group.position)));
+      titleEls[k].anchor = { x: (inP.x + outP.x) / 2, y: bb.y1 + 44 };
+    });
+    updateOverlays();
+    stage.requestRender();
+  }
+
+  function updateOverlays() {
+    const vis = visibleSides();
+    const rect = canvasRect();
+    [0, 1].forEach((k) => {
+      const t = titleEls[k];
+      const on = vis.includes(k) && t.anchor;
+      t.root.style.display = on ? '' : 'none';
+      if (!on) return;
+      t.root.style.left = `${t.anchor.x}px`;
+      t.root.style.top = `${Math.min(rect.height - 30, t.anchor.y)}px`;
+    });
+  }
+
+  // ---------------------------------------------------------------- camera
+  function directionFor() {
+    const s = sides.find(Boolean);
+    return s && s.model.plan ? new THREE.Vector3(0.0, 1.0, -0.62) : new THREE.Vector3(-1, 0.42, -0.5);
+  }
+
+  function fitBox(box, dir, pad) {
+    const cam = stage.camera;
+    const d = dir.clone().normalize();
+    const target = box.getCenter(new THREE.Vector3());
+    const up = new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(up, d).normalize();   // camera right (looking along -d)
+    const upv = new THREE.Vector3().crossVectors(d, right).normalize();
+    const vf = THREE.MathUtils.degToRad(cam.fov);
+    const tv = Math.tan(vf / 2);
+    const th = tv * cam.aspect;
+    let dist = 1;
+    [box.min.x, box.max.x].forEach((x) => [box.min.y, box.max.y].forEach((y) => [box.min.z, box.max.z].forEach((z) => {
+      const rel = new THREE.Vector3(x, y, z).sub(target);
+      const back = rel.dot(d); const rr = Math.abs(rel.dot(right)); const uu = Math.abs(rel.dot(upv));
+      dist = Math.max(dist, back + (rr * pad) / th, back + (uu * pad) / tv);
+    })));
+    cam.position.copy(target).addScaledVector(d, dist);
+    cam.near = Math.max(0.1, dist / 200);
+    cam.far = Math.max(1000, dist * 30);
+    cam.updateProjectionMatrix();
+    stage.controls.target.copy(target);
+    stage.controls.minDistance = dist * 0.25;
+    stage.controls.maxDistance = dist * 4;
+    stage.controls.update();
+    cam.updateMatrixWorld();
+    return { target, dist };
+  }
+
+  function layoutAll() {
+    // slots and light
+    [0, 1].forEach((k) => { if (sides[k]) sides[k].group.position.copy(slotOffset(k)); });
+    const vis = visibleSides();
+    vis.forEach((k) => { sides[k].group.visible = true; });
+    [0, 1].forEach((k) => {
+      if (sides[k] && !vis.includes(k)) { sides[k].group.visible = false; }
+      if (sides[k]) {
+        sides[k].callouts.forEach((c) => { c.api.object.visible = vis.includes(k) && st.labels; c.api.setAnchor(anchorFor(k, c.api.userData.spec).add(sides[k].group.position)); });
+        sides[k].cold.object.visible = vis.includes(k);
+        sides[k].markers.forEach((m) => m.setVisible(vis.includes(k)));
+        sides[k].cold.setAnchor(sides[k].model.P(sides[k].r.minInteriorAt + 0.5, 0, 0).add(sides[k].group.position));
+      }
+    });
+    if (key && vis.length) {
+      const box = new THREE.Box3();
+      vis.forEach((k) => box.union(worldBox(k)));
+      const c = box.getCenter(new THREE.Vector3());
+      const sph = box.getBoundingSphere(new THREE.Sphere());
+      const plan = sides[vis[0]].model.plan;
+      key.target.position.copy(c);
+      key.position.copy(c).add(plan ? new THREE.Vector3(-0.5, 1.2, -0.7).multiplyScalar(sph.radius * 1.6) : new THREE.Vector3(-1.2, 1.0, -0.6).multiplyScalar(sph.radius * 1.6));
+      const sc = key.shadow.camera;
+      const e = sph.radius * 1.15;
+      sc.left = -e; sc.right = e; sc.top = e; sc.bottom = -e; sc.near = 1; sc.far = sph.radius * 6;
+      sc.updateProjectionMatrix();
+      if (fill) fill.position.copy(c).add(new THREE.Vector3(0.9, 0.5, 0.8).multiplyScalar(sph.radius * 1.5));
+    }
+    shadowDirty();
+  }
+
+  function frame() {
+    const vis = visibleSides();
+    if (!vis.length) return;
+    layoutAll();
+    const dir = directionFor();
+    const plan = sides[vis[0]].model.plan;
+    const boxNow = () => { const bx = new THREE.Box3(); vis.forEach((k) => bx.union(worldBox(k))); return bx; };
+    stage.camera.fov = plan ? 22 : 26;
+    stage.camera.aspect = stage.renderer.domElement.clientWidth / Math.max(1, stage.renderer.domElement.clientHeight);
+    let pad = 1.04;
+    for (let pass = 0; pass < 9; pass++) {
+      fitBox(boxNow(), dir, pad);
+      if (plan && vis.length === 2) {
+        // the column of names between the two models needs room: size the gap from the current scale
+        const a0 = toPx(new THREE.Vector3(0, 0, 0)); const a1 = toPx(new THREE.Vector3(10, 0, 0));
+        const ppi = Math.abs(a1.x - a0.x) / 10 || 10;
+        let wmax = 0;
+        vis.forEach((k) => sides[k].callouts.forEach((c) => { wmax = Math.max(wmax, c.api.size.w); }));
+        const need = Math.min(46, Math.max(5, (wmax + 34) / ppi));
+        if (Math.abs(need - st.gapPlan) > 0.35) {
+          st.gapPlan = need;
+          layoutAll();
+          fitBox(boxNow(), dir, pad);
+        }
+      }
+      placeLabels();
+      // measure everything that has to stay inside the canvas
+      const rect = canvasRect();
+      let x0 = 1e9; let x1 = -1e9; let y0 = 1e9; let y1 = -1e9;
+      const grow = (r2) => { x0 = Math.min(x0, r2.left); x1 = Math.max(x1, r2.right); y0 = Math.min(y0, r2.top); y1 = Math.max(y1, r2.bottom); };
+      vis.forEach((k) => {
+        const s = sides[k];
+        s.callouts.forEach((c) => { if (c.api.object.visible) { const rr = c.api.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); } });
+        { const rr = s.cold.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); }
+        const b = worldBox(k);
+        [b.min.x, b.max.x].forEach((x) => [b.min.y, b.max.y].forEach((y) => [b.min.z, b.max.z].forEach((z) => { const p = toPx(new THREE.Vector3(x, y, z)); grow({ left: p.x, right: p.x, top: p.y, bottom: p.y }); })));
+        const ta = titleEls[k].anchor;
+        if (ta) { const tw = Math.min(rect.width * 0.46, 40 + (titleEls[k].text.textContent.length * 6.6)); grow({ left: ta.x - tw / 2, right: ta.x + tw / 2, top: ta.y, bottom: ta.y + 28 }); }
+      });
+      const m = 10;
+      const over = Math.max(0, (m - x0) / rect.width, (x1 - (rect.width - m)) / rect.width, (m - y0) / rect.height, (y1 - (rect.height - m)) / rect.height);
+      const under = Math.max((x1 - x0) / (rect.width - 2 * m), (y1 - y0) / (rect.height - 2 * m));
+      if (over <= 0.002 && under > 0.94) break;
+      if (over > 0.002) pad *= 1 + over * 1.15 + 0.02;
+      else pad *= Math.max(0.8, under * 1.01);
+    }
+    st.userMoved = false;
+    st.framedFor = `${st.detailId}|${st.single}`;
+    stage.requestRender();
+  }
+
+  // ---------------------------------------------------------------- picking
+  function pickables() {
     const out = [];
-    const nbx = Math.max(1, Math.floor(nx / s));
-    const nby = Math.max(1, Math.floor(ny / s));
-    for (let bj = 0; bj < nby; bj++) {
-      for (let bi = 0; bi < nbx; bi++) {
-        const i = Math.min(nx - 1, Math.floor((bi + 0.5) * (nx / nbx)));
-        const j = Math.min(ny - 1, Math.floor((bj + 0.5) * (ny / nby)));
-        out.push([i, j]);
-      }
+    visibleSides().forEach((k) => out.push(...sides[k].pickables));
+    return out;
+  }
+  const allCallouts = () => {
+    const out = [];
+    visibleSides().forEach((k) => { const s = sides[k]; if (st.labels) s.callouts.forEach((c) => { if (!c.api.userData.secondary) out.push(c.api); }); out.push(s.cold); });
+    return out;
+  };
+
+  /** What is under the pointer: { side, infoId, name, tempF, cell, callout } or null. */
+  function pickAt(clientX, clientY) {
+    const co = pickCallout(stage, clientX, clientY, allCallouts());
+    if (co) {
+      const side = co.userData.side;
+      return { side, infoId: co.userData.infoId, name: co.text.split('\n')[0], callout: true, cold: !!co.userData.cold };
     }
-    // extras on cells that carry far more heat than the clear wall
-    const space = s * 0.55;
-    const extra = [];
-    for (let j = 0; j < ny && extra.length < 28; j++) {
-      for (let i = 0; i < nx && extra.length < 28; i++) {
-        if (mag[j * nx + i] < qRef * 6) continue;
-        if (extra.some(([ei, ej]) => Math.abs(ei - i) < space && Math.abs(ej - j) < space)) continue;
-        extra.push([i, j]);
-      }
+    const hit = stage.pick(clientX, clientY, pickables());
+    if (!hit) return null;
+    const ud = hit.object.userData;
+    const s = sides[ud.side];
+    if (!s) return null;
+    if (ud.kind === 'ctx') {
+      return { side: ud.side, infoId: ud.info, name: ud.info === 'balcony_slab' ? 'Balcony slab' : 'Concrete slab', callout: false, tempF: null };
     }
-    // drop regular samples that sit on top of an extra
-    const keep = out.filter(([i, j]) => !extra.some(([ei, ej]) => Math.abs(ei - i) < space * 0.8 && Math.abs(ej - j) < space * 0.8));
-    return { samples: keep.concat(extra), spacing: s };
+    const uv = hit.uv;
+    if (!uv) return null;
+    const i = Math.min(s.r.nx - 1, Math.max(0, Math.floor(uv.x * s.r.nx)));
+    const j = Math.min(s.r.ny - 1, Math.max(0, Math.floor(uv.y * s.r.ny)));
+    const part = s.model.partAt(i, j);
+    let info = part.info;
+    if (info === 'slab_edge' && s.r.detailId === 'slab') info = 'balcony_slab';
+    return { side: ud.side, infoId: info, name: part.name, tempF: s.r.temps[j * s.r.nx + i], callout: false, cell: { i, j } };
   }
 
-  const shaftGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
-  shaftGeo.translate(0, 0.5, 0);           // base at origin, along +y
-  const headGeo = new THREE.ConeGeometry(1, 1, 10);
-  headGeo.translate(0, 0.5, 0);
-
-  function buildArrows(r) {
-    if (st.arrowGroup) { geo.remove(st.arrowGroup); disposeObject(st.arrowGroup); st.arrowGroup = null; }
-    if (!st.arrows) return;
-    const L = st.L;
-    const { nx, ny } = r;
-    const { qi, qj } = fluxField(r);
-    const mag = new Float32Array(nx * ny);
-    for (let p = 0; p < nx * ny; p++) mag[p] = Math.hypot(qi[p], qj[p]);
-    const qRef = Math.max(1e-6, Math.abs(r.qClear));
-    const { samples, spacing } = pickSamples(r, mag, qRef);
-    const unit = spacing * L.c;   // world size of one sample block
-    const n = samples.length;
-    const mk = (g, color, order) => {
-      const m = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color, toneMapped: false, depthWrite: order > 2 }), n);
-      m.renderOrder = order;
-      m.frustumCulled = false;
-      return m;
-    };
-    const halo = { shaft: mk(shaftGeo.clone(), 0xf6f2e8, 2), head: mk(headGeo.clone(), 0xf6f2e8, 2) };
-    const ink = { shaft: mk(shaftGeo.clone(), 0x14120e, 3), head: mk(headGeo.clone(), 0x14120e, 3) };
-    const grp = new THREE.Group();
-    const yAxis = new THREE.Vector3(0, 1, 0);
-    const q4 = new THREE.Quaternion();
-    const m4 = new THREE.Matrix4();
-    const one = new THREE.Vector3(1, 1, 1);
-    const minT = 0.2 * unit, maxT = 0.95 * unit;
-    let used = 0;
-    samples.forEach(([i, j]) => {
-      const p = j * nx + i;
-      const mg = mag[p];
-      if (mg < 1e-9) return;
-      const dir = L.dirVec(qi[p], qj[p]).normalize();
-      // log scale: qClear / 10 gives the shortest arrow, 16 x qClear the longest
-      const u = Math.min(1, Math.max(0, (Math.log10(mg / qRef) + 1) / 2.2));
-      const len = minT + (maxT - minT) * u;
-      const headLen = Math.min(len * 0.5, unit * 0.34);
-      const shaftLen = len - headLen;
-      const w = Math.max(0.06, unit * 0.05) * (0.8 + 0.7 * u);   // shaft radius
-      // center the arrow on the cell center
-      const c0 = L.cellCenter(i, j, 0.25 + (L.plan ? 0 : 0)).addScaledVector(dir, -len / 2);
-      q4.setFromUnitVectors(yAxis, dir);
-      [[halo, 1.9], [ink, 1]].forEach(([set, grow]) => {
-        const sShaft = new THREE.Vector3(w * grow, shaftLen + (grow > 1 ? w * 0.6 : 0), w * grow);
-        m4.compose(c0.clone().addScaledVector(dir, grow > 1 ? -w * 0.3 : 0), q4, sShaft);
-        set.shaft.setMatrixAt(used, m4);
-        const hp = c0.clone().addScaledVector(dir, shaftLen);
-        const sHead = new THREE.Vector3(w * 3.2 * grow, headLen + (grow > 1 ? w * 1.0 : 0), w * 3.2 * grow);
-        m4.compose(grow > 1 ? hp.addScaledVector(dir, -w * 0.3) : hp, q4, sHead);
-        set.head.setMatrixAt(used, m4);
-      });
-      used++;
+  function setHover(h) {
+    const prev = st.hoverInfo;
+    const same = (!prev && !h) || (prev && h && prev.side === h.side && prev.infoId === h.infoId);
+    if (same) return;
+    st.hoverInfo = h ? { side: h.side, infoId: h.infoId } : null;
+    sides.forEach((s, k) => {
+      if (!s) return;
+      s.callouts.forEach((c) => c.api.setActive(!!h && h.side === k && c.api.userData.infoId === h.infoId));
+      s.cold.setActive(!!h && h.side === k && h.cold === true);
     });
-    [halo.shaft, halo.head, ink.shaft, ink.head].forEach((m) => { m.count = used; m.instanceMatrix.needsUpdate = true; grp.add(m); });
-    void one;
-    st.arrowGroup = grp;
-    geo.add(grp);
   }
 
-  // ---- labels and marker (cheap; rebuilt on every climate change)
-  function buildLabels(r, climate) {
-    for (const ch of Array.from(dyn.children)) { dyn.remove(ch); disposeObject(ch); }
-    const L = st.L;
-    const size = Math.max(L.W, L.D + 10);
-    const hl = L.plan ? 2.1 : Math.max(3.2, size * 0.075);     // label height
-    const f = (t) => `${Math.round(t)} °F`;
-    const mkLabel = (text, o = {}) => makeLabelSprite(text, { height: hl, ...o });
-
-    const inLab = mkLabel(`INTERIOR ${f(climate.tIn)}`);
-    const outLab = mkLabel(`EXTERIOR ${f(climate.tOut)}`);
-    const halfIn = inLab.scale.x / 2, halfOut = outLab.scale.x / 2;
-    if (L.plan) {
-      const coneH0 = L.plan ? 1.6 : Math.max(2.2, size * 0.07);
-      inLab.position.set(-L.W / 2 + halfIn, L.H, -(coneH0 + hl * 1.9));
-      outLab.position.set(-L.W / 2 + halfOut, L.H, L.D + hl * 0.9);
-    } else {
-      const y = L.W * 0.86;
-      inLab.position.set(-L.Lx / 2, y, -halfIn - 2);
-      outLab.position.set(-L.Lx / 2, y, L.D + halfOut + 2);
-    }
-    dyn.add(inLab, outLab);
-    st.labels = [inLab, outLab];
-
-    // coldest spot marker: a cone pointing at the interior surface
-    const i = r.minInteriorAt;
-    const tip = L.P(i + 0.5, 0, 0.1);
-    const coneH = L.plan ? 1.6 : Math.max(2.2, size * 0.07);
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(coneH * 0.38, coneH, 16), new THREE.MeshBasicMaterial({ color: climate.tIn >= climate.tOut ? (r.condensationRisk ? 0xc8261a : 0x1d4fd0) : 0xd93a14, toneMapped: false }));
-    cone.geometry.translate(0, -coneH / 2, 0);        // tip at origin, pointing +y
-    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)); // point toward +z
-    cone.position.copy(tip).add(new THREE.Vector3(0, 0, -0.0));
-    cone.renderOrder = 8;
-    cone.material.depthTest = false;
-    dyn.add(cone);
-    const cold = mkLabel(`COLDEST ${r.minInteriorT.toFixed(1)} °F`, { bg: '#c8261a', color: '#ffffff', border: '#14120e' });
-    const tagPos = tip.clone();
-    if (L.plan) {
-      const halfC = cold.scale.x / 2;
-      tagPos.z = -coneH * 0.55;
-      tagPos.x += tip.x > 0 ? -(halfC + coneH * 0.5) : (halfC + coneH * 0.5);
-    } else {
-      tagPos.z -= coneH + cold.scale.x / 2 - hl * 0.2;
-    }
-    cold.position.copy(tagPos);
-    dyn.add(cold);
+  // ---------------------------------------------------------------- resize
+  let lastW = 0; let lastH = 0; let rzTimer = 0;
+  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+    const w = stageEl.clientWidth; const h = stageEl.clientHeight;
+    if (!w || !h || (Math.abs(w - lastW) < 2 && Math.abs(h - lastH) < 2)) return;
+    lastW = w; lastH = h;
+    clearTimeout(rzTimer);
+    rzTimer = setTimeout(() => {
+      stage.camera.aspect = w / h;
+      stage.camera.updateProjectionMatrix();
+      if (!st.userMoved) frame(); else { placeLabels(); }
+    }, 60);
+  }) : null;
+  if (ro) ro.observe(stageEl);
+  const onControls = () => { updateOverlays(); };
+  const onStart = () => { st.userMoved = true; };
+  if (stage.controls) {
+    stage.controls.addEventListener('change', onControls);
+    stage.controls.addEventListener('start', onStart);
   }
 
   // ---------------------------------------------------------------- public
-  const ctrl = {
-    /** Full rebuild (detail or variant changed). */
-    build(r, climate) {
-      st.result = r; st.climate = climate;
-      buildGeometry(r);
-      paintTemps(r, climate);
-      buildArrows(r);
-      buildLabels(r, climate);
-      ctrl.setView(st.view);
+  const api = {
+    /**
+     * Rebuild both mock-ups for a detail.
+     * @param {string} detailId
+     * @param {object[]} results [problem, better] solveBridge results
+     * @param {object} climate
+     */
+    setDetail(detailId, results, climate) {
+      st.detailId = detailId; st.climate = { ...climate }; st.results = results;
+      [0, 1].forEach((k) => { buildSide(k, results[k]); });
+      [0, 1].forEach((k) => { paintSide(sides[k], st.climate); buildLabels(k); updateLabelText(k); rebuildArrows(k); });
+      applyShow();
+      frame();
     },
-    /** Climate changed, same geometry. */
-    update(r, climate) {
-      st.result = r; st.climate = climate;
-      paintTemps(r, climate);
-      buildArrows(r);
-      buildLabels(r, climate);
+    /** Same geometry, new numbers (climate slider). */
+    setResults(results, climate) {
+      st.climate = { ...climate }; st.results = results;
+      [0, 1].forEach((k) => {
+        const s = sides[k]; if (!s) return;
+        s.r = results[k];
+        paintSide(s, st.climate);
+        updateLabelText(k);
+        rebuildArrows(k);
+      });
       stage.requestRender();
     },
-    setView(v) {
-      st.view = v;
-      if (st.cutMat) { st.cutMat.map = v === 'temp' ? st.tempTex : st.matTex; st.cutMat.needsUpdate = true; }
-      restyleBody();
+    setShow(v) { st.show = v; applyShow(); },
+    setArrows(on) { st.arrows = !!on; [0, 1].forEach((k) => rebuildArrows(k)); stage.requestRender(); },
+    setLabels(on) {
+      st.labels = !!on;
+      sides.forEach((s, k) => { if (s) s.callouts.forEach((c) => c.api.setVisible(st.labels && visibleSides().includes(k))); });
+      if (visibleSides().length && st.framedFor) placeLabels();
       stage.requestRender();
     },
-    setArrows(on) {
-      st.arrows = !!on;
-      if (st.result) buildArrows(st.result);
+    setTitles(list) {
+      st.titles = list;
+      list.forEach((t, k) => { titleEls[k].text.textContent = t; });
+    },
+    /** Phone: show one side at a time (0 problem, 1 better) or both (null). Re-frames only when the layout changes. */
+    setSingle(k) {
+      if (st.single === k) return;
+      const wasBoth = st.single == null;
+      st.single = k;
+      if (wasBoth || k == null) { frame(); return; }
+      // switching between the two single views keeps the camera: only the visible model changes
+      layoutAll();
+      placeLabels();
       stage.requestRender();
     },
-    /** Camera frame for the current geometry. */
-    frame() {
-      const L = st.L;
-      if (!L) return;
-      const box = new THREE.Box3();
-      if (L.plan) {
-        box.min.set(-L.W / 2 - 1, L.H - 9, -9);
-        box.max.set(L.W / 2 + 9, L.H, L.D + 5);
-      } else {
-        box.min.set(-L.Lx / 2, 0, -14);
-        box.max.set(-L.Lx / 2 + 2, L.W, L.D + 14);
-      }
-      const dir = L.plan ? [0.08, 1.0, 0.75] : [-1.5, 0.3, 0.55];
-      stage.frame(box, { dir, padding: 1.0 });
-    },
+    frame() { frame(); },
+    pickAt,
+    setHover,
+    pickCallouts: allCallouts,
+    get sides() { return sides; },
     onTheme() {
-      if (st.result) { restyleBody(); buildLabels(st.result, st.climate); stage.requestRender(); }
+      floorMat.opacity = stage.theme.dark ? 0.5 : 0.2;
+      stage.requestRender();
     },
     dispose() {
+      if (ro) ro.disconnect();
+      clearTimeout(rzTimer);
+      if (stage.controls) { stage.controls.removeEventListener('change', onControls); stage.controls.removeEventListener('start', onStart); }
+      if (st.stopArrows) { st.stopArrows(); st.stopArrows = null; }
+      [0, 1].forEach(disposeSide);
+      overlay.remove();
+      bank.dispose();
+      floor.geometry.dispose(); floorMat.dispose();
+      if (key) { key.castShadow = false; stage.scene.remove(key.target); }
+      if (envRT) { stage.scene.environment = prevEnv; envRT.dispose(); }
       stage.scene.remove(root);
-      disposeObject(root);
-      if (st.tempTex) st.tempTex.dispose();
-      if (st.matTex) st.matTex.dispose();
-      shaftGeo.dispose();
-      headGeo.dispose();
     },
   };
-  return ctrl;
+  return api;
 }

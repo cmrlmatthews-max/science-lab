@@ -41,7 +41,7 @@ const CSS = `
 .ic-prods li{padding:1px 8px;border:1px solid var(--line);border-radius:999px;font-size:12.5px;background:var(--paper-3)}
 .ic-facts{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:3px 0 0;font-size:13px}
 .ic-facts dt{color:var(--ink-2)}
-.ic-facts dd{margin:0;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.ic-facts dd{margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .ic-more-btn{margin-top:11px;padding:0;border:0;background:none;color:var(--accent);font:500 13px var(--font-body);cursor:pointer;position:relative}
 .ic-more-btn::after{content:"";position:absolute;inset:-10px -6px}
 .ic-more-btn:hover{text-decoration:underline}
@@ -269,16 +269,19 @@ export function createInfoCard(hostEl) {
     const M = 8;
     if (pinned && !isWide()) {
       root.dataset.mode = 'narrow';
+      // Bottom card. It sits below the stage (over the panels) so the wall stays visible.
       const r = host.getBoundingClientRect();
-      const hostOk = r.width > 100 && r.height > 100 && r.bottom > 0;
-      const left = hostOk ? Math.max(M, r.left + M) : M;
-      const right = hostOk ? Math.min(vw - M, r.right - M) : vw - M;
-      const bottom = hostOk ? Math.max(M, vh - r.bottom + M) : M;
-      const cap = hostOk ? Math.max(220, Math.min(vh * 0.55, r.height - 2 * M)) : vh * 0.55;
+      const hostOk = r.width > 100 && r.height > 100 && r.bottom > 0 && host !== document.body;
+      const left0 = hostOk ? Math.max(M, r.left + M) : M;
+      const right0 = hostOk ? Math.min(vw - M, r.right - M) : vw - M;
+      const width = Math.min(right0 - left0, 600);
+      const left = left0 + (right0 - left0 - width) / 2;
+      const below = hostOk ? vh - r.bottom - 2 * M : vh * 0.55;
+      const cap = Math.max(240, Math.min(vh * 0.55, below));
       root.style.left = `${left}px`;
       root.style.top = 'auto';
-      root.style.bottom = `${bottom}px`;
-      root.style.width = `${right - left}px`;
+      root.style.bottom = 'calc(8px + env(safe-area-inset-bottom, 0px))';
+      root.style.width = `${width}px`;
       root.style.maxHeight = `${cap}px`;
       return;
     }
@@ -340,6 +343,11 @@ export function createInfoCard(hostEl) {
       const sc = root.scrollTop;
       render();
       root.scrollTop = sc;
+      if (!pinned && opts.x != null && opts.y != null) {
+        // pointer drifted under the hover card: move the card away from it
+        const r = root.getBoundingClientRect();
+        if (opts.x >= r.left - 6 && opts.x <= r.right + 6 && opts.y >= r.top - 6 && opts.y <= r.bottom + 6) pos = { x: opts.x, y: opts.y };
+      }
       place();
       return;
     }

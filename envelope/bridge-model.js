@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { Mesher } from './bridge-parts.js';
 
-export const PLAN_H = 18;      // inches of wall below the plan cut
+export const PLAN_H = 8;       // inches of wall below the plan cut
 export const LX = 12;          // inches the section parts run behind the cut
 export const S_IN = 12;        // room-side stub (floor slab) in inches
 export const S_OUT = 10;       // balcony stub in inches
@@ -207,13 +207,16 @@ export function buildModel(r) {
     };
     add('gyp', 'Gypsum board', 'gyp_063');
     const bat = rowOf('batt');
+    const L0 = labels.length;
     // stud: label it at the stud itself (centre of the slice)
     if (idxOf('softwood') >= 0) labels.push({ text: 'Wood stud', id: 'wood_stud', anchor: new THREE.Vector3(0, PLAN_H, zMid(bat)), key: 'softwood', center: true });
     if (idxOf('steel') >= 0) labels.push({ text: 'Steel stud', id: 'steel_stud', anchor: new THREE.Vector3(0, PLAN_H, zMid(bat)), key: 'steel', center: true });
     labels.push({ text: 'Fiberglass batt', id: 'batt', anchor: new THREE.Vector3(-xs + 1.0, PLAN_H, zMid(bat) + 1.2), key: 'batt' });
     add('sheath', 'Gypsum sheathing', 'gyp_sheath');
-    if (idxOf('minwool') >= 0) add('minwool', 'Continuous insulation', 'continuous_insulation');
+    if (idxOf('minwool') >= 0) add('minwool', 'Mineral wool', 'minwool');
     add('clad', 'Cladding', 'fibercement');
+    labels.forEach((l) => { if (!l.center) l.edge = true; });
+    void L0;
   } else {
     const add = (m, text, id, anchorY, key) => {
       const s = rowOf(m);

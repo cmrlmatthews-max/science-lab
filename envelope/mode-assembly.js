@@ -37,7 +37,7 @@ const CSS = `
 .asm-ctl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;line-height:1.3}
 .asm-ctl-row .swatch{flex:none}
 .asm-ctl-row .asm-ctl-t{color:var(--ink-2);flex:1 1 120px;min-width:0}
-.asm-hint{position:absolute;z-index:5;top:8px;left:8px;right:8px;margin:0 auto;width:max-content;max-width:min(560px,calc(100% - 16px));display:flex;align-items:center;gap:8px;padding:5px 6px 5px 11px;background:var(--paper-2);border:1px solid var(--line-strong);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,0,0,.14);font:400 12.5px/1.35 var(--font-body);color:var(--ink-2)}
+.asm-hint{position:absolute;z-index:5;bottom:8px;left:8px;right:8px;margin:0 auto;width:max-content;max-width:min(560px,calc(100% - 16px));display:flex;align-items:center;gap:8px;padding:5px 6px 5px 11px;background:var(--paper-2);border:1px solid var(--line-strong);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,0,0,.14);font:400 12.5px/1.35 var(--font-body);color:var(--ink-2)}
 .asm-hint button{flex:none;position:relative;width:24px;height:24px;border:1px solid var(--line-strong);border-radius:50%;background:var(--paper-3);color:var(--ink-2);padding:0;font-size:14px;line-height:1}
 .asm-hint button::after{content:"";position:absolute;inset:-10px}
 `;
@@ -331,14 +331,14 @@ export default {
     const condFix = el('div', { class: 'asm-fix' });
     const condChips = el('div', { class: 'asm-chips' }, infoChip('condensation', 'Why this matters', { extra: condExtra }));
     const vaporBox = el('div', { class: 'section-body' });
-    const vaporChips = el('div', { class: 'asm-chips' }, infoChip('vapor_retarder'), infoChip('vapor_classes', 'Vapor classes'), infoChip('climate_zone', 'Climate zone'));
+    const vaporChipEls = [infoChip('vapor_retarder'), infoChip('vapor_classes', 'Vapor classes'), infoChip('climate_zone', 'Climate zone')];
     const leakBox = el('div', { class: 'section-body' });
-    const leakChips = el('div', { class: 'asm-chips' }, infoChip('air_leakage'));
+    const leakChipEl = infoChip('air_leakage');
     panelB.append(
       section('Numbers', Object.assign(stats(sR.el, sU.el, sQ.el, sBig.el, sDew.el, sFrame.el), { className: 'stats asm-stats' })),
       section('Condensation', condBox, condFix, condChips),
-      section('Vapor retarder', vaporBox, vaporChips),
-      section('Air leakage', leakBox, leakChips),
+      section('Vapor retarder', vaporBox),
+      section('Air leakage', leakBox),
     );
 
     // ---------------------------------------------------------------- panel C
@@ -495,7 +495,7 @@ export default {
       vr.warnings.forEach((w) => vaporBox.append(banner({ kind: 'warn', title: 'Vapor retarder', text: w.text })));
       if (vr.ok) vaporBox.append(banner({ kind: 'ok', title: 'Vapor retarder', text: 'This class works for this zone and wall.' }));
       vr.notes.forEach((n) => vaporBox.append(el('div', { class: 'asm-note', text: n })));
-      vaporBox.append(el('div', {}, sourceTag(vr.source)));
+      vaporBox.append(el('div', { class: 'asm-chips' }, sourceTag(vr.source), ...vaporChipEls));
 
       // leakage bars
       const inf = infiltrationLoss(st.leakCfm, d);
@@ -507,7 +507,7 @@ export default {
         bar('Conduction loss Q', Q, false, 'cond'),
         bar('Infiltration 1.08 × CFM × ΔT', inf, true, 'inf'),
         st.leakCfm === 0 ? el('div', { class: 'asm-note', text: 'Move the air leakage slider to compare.' }) : null,
-        el('div', {}, sourceTag('Q = 1.08 × CFM × ΔT — ARE formula sheet')),
+        el('div', { class: 'asm-chips' }, sourceTag('Q = 1.08 × CFM × ΔT — ARE formula sheet'), leakChipEl),
       );
 
       // summary
@@ -534,6 +534,8 @@ export default {
     });
     cleanup.push(unsub);
 
+    let hintEl = null;
+    const dismissHint = () => { if (hintEl) { lsSet(HINT_KEY, '1'); hintEl.remove(); hintEl = null; } };
     // 3D hover (wide screens) and tap/click (pinned card). Both guard on part C's API.
     const onPtr = (e) => { lastPtr = { x: e.clientX, y: e.clientY }; };
     stageEl.addEventListener('pointermove', onPtr);
@@ -551,6 +553,7 @@ export default {
         }
         if (wall3d.setHoverLayer) wall3d.setHoverLayer(h.kind === 'dew_plane' || h.kind === 'condensation' ? null : (h.layerIndex ?? null));
         card.show(m.id, { x: h.clientX, y: h.clientY, extra: m.extra });
+        dismissHint();
       });
     }
     wall3d.onSelect((i, payload) => {
@@ -561,8 +564,10 @@ export default {
       const x = h.clientX != null ? h.clientX : lastPtr.x;
       const y = h.clientY != null ? h.clientY : lastPtr.y;
       card.show(m.id, { pinned: true, x, y, extra: m.extra });
+      dismissHint();
     });
     if (wall3d.setCallouts) wall3d.setCallouts(labelsOn);
+    if (/[?&]debug\b/.test(location.search)) { window.__envAssembly = { wall3d, card, getAn: () => an }; cleanup.push(() => { delete window.__envAssembly; }); }
 
     // first-use hint over the stage
     if (!lsGet(HINT_KEY)) {
@@ -570,9 +575,10 @@ export default {
       const x = el('button', { type: 'button', 'aria-label': 'Dismiss hint', text: '\u00d7' });
       const hint = el('div', { class: 'asm-hint', role: 'note' },
         el('span', { text: wide ? 'Hover over any part of the wall to learn what it does. Click to keep the card open.' : 'Tap any part of the wall to learn what it does.' }), x);
-      x.addEventListener('click', () => { lsSet(HINT_KEY, '1'); hint.remove(); });
+      hintEl = hint;
+      x.addEventListener('click', dismissHint);
       stageWrap.appendChild(hint);
-      cleanup.push(() => hint.remove());
+      cleanup.push(() => { hint.remove(); hintEl = null; });
     }
     wall3d.setShow(keep.show);
     wall3d.setExplode(keep.explode);
