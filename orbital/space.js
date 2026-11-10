@@ -231,9 +231,9 @@ void main() {
   if (uHasNorm > 0.5) { vec3 m = texture2D(tNorm, vUv).xyz * 2.0 - 1.0; m.xy *= 0.8; N = perturbN(Ng, vWP, vUv, m); }
   float ndlG = dot(Ng, L); float ndl = dot(N, L);
   vec3 day = uHasDay > 0.5 ? texture2D(tDay, vUv).rgb : uFlat;
-  float lit = pow(clamp(ndl, 0.0, 1.0), 0.8);
+  float lit = smoothstep(-0.2, 0.6, ndl);
   float tw = exp(-pow(ndlG / 0.16, 2.0));
-  vec3 col = day * lit * 1.9 + vec3(0.015, 0.04, 0.10) * lit;
+  vec3 col = day * lit * 1.5 + vec3(0.015, 0.04, 0.10) * lit;
   col *= mix(vec3(1.0), vec3(1.0, 0.72, 0.52), tw * 0.5);
   float sp = uHasSpec > 0.5 ? texture2D(tSpec, vUv).r : 0.0;
   vec3 H = normalize(L + V); float nh = max(dot(N, H), 0.0);
@@ -690,13 +690,13 @@ function panelTexture() {
  * A small spacecraft (gold foil body, two blue solar panels, a dish) that keeps a readable on-screen size, a bright marker
  * dot so it is never lost, and a glowing fading trail. The craft is always drawn in front of the planet.
  * Optional setHeading([vx, vy]) points the craft along a velocity (orbit-plane km/s, any scale); nothing happens if it is never called.
- * @param {{color?:string, size?:number, trail?:number}} [opts] size scales the on-screen craft (default 13, about 40 px wide), trail = number of remembered positions (default 0 = none)
+ * @param {{color?:string, size?:number, trail?:number}} [opts] size scales the on-screen craft (default 13, about 48 px wide), trail = number of remembered positions (default 0 = none)
  * @returns {{object:THREE.Group, setPosition:(posKm:number[], kmPerUnit:number)=>void, setHeading:(v:number[])=>void, clearTrail:()=>void, setColor:(css:string)=>void, dispose:()=>void}}
  */
 export function createCraft(opts = {}) {
   const size = opts.size || 13;
   const trailN = opts.trail || 0;
-  const spanPx = size * 3.1;
+  const spanPx = size * 3.7;
   let color = opts.color || THEME.craft;
   const object = new THREE.Group();
   const craftGroup = new THREE.Group(); // positioned at the craft
@@ -710,11 +710,11 @@ export function createCraft(opts = {}) {
   // soft glow behind the craft, never lost
   const glowTex = keep(glowTexture(64));
   const glowMat = keep(new THREE.SpriteMaterial({ map: glowTex, color, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
-  const glowSprite = constSprite(glowMat, 26, 26);
+  const glowSprite = constSprite(glowMat, 32, 32);
   glowSprite.renderOrder = 10;
   craftGroup.add(glowSprite);
   const dotMat = keep(new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
-  const dotSprite = constSprite(dotMat, 9, 9);
+  const dotSprite = constSprite(dotMat, 11, 11);
   dotSprite.renderOrder = 14;
   craftGroup.add(dotSprite);
 
@@ -1076,7 +1076,7 @@ export function createStars(count = 260) {
   dome.renderOrder = -100;
   // Rotate the baked band (normal (-0.3, 0.85, 0.43) after three's u mapping) onto the star band plane.
   dome.quaternion.setFromUnitVectors(new THREE.Vector3(-0.3, 0.85, 0.43).normalize(), nPlane);
-  const cancel = whenReady(e, (ok) => { if (ok) { domeMat.color.setScalar(0.3); domeMat.needsUpdate = true; requestRender(); } });
+  const cancel = whenReady(e, (ok) => { if (ok) { domeMat.color.setScalar(0.24); domeMat.needsUpdate = true; requestRender(); } });
   points.add(dome);
   const follow = (renderer, scene, camera) => {
     points.position.copy(camera.position);

@@ -951,7 +951,7 @@ export function createViewer(stage, opts = {}) {
       // glassy translucent sheet with a clear bright edge
       const mat = new THREE.MeshPhysicalMaterial({
         color: col, roughness: 0.06, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04,
-        envMap: env, envMapIntensity: envIntensity * 1.3, transparent: true, opacity: theme.dark ? 0.3 : 0.26,
+        envMap: env, envMapIntensity: envIntensity * 0.55, transparent: true, opacity: theme.dark ? 0.34 : 0.3,
         side: THREE.DoubleSide, depthWrite: false, fog: false,
       });
       const mesh = new THREE.Mesh(geo, mat);

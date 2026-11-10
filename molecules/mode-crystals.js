@@ -311,9 +311,11 @@ export default {
         crystals: {
           showCell: true, showBonds: true, plane: null, ...s,
           id: c.id, amount, nx: counts[0], ny: counts[1], nz: counts[2],
-          showBoundary: s.showBoundary !== false, showNumbers: !!s.showNumbers,
+          showBoundary: s.showBoundary !== false, showNumbers: !!s.showNumbers, spin: !!s.spin,
         },
       });
+      // Blocks are easier to read when still: spin is off here unless the user turned it on in this mode.
+      if (!!store.get().view.spin !== !!store.get().crystals.spin) store.set({ view: { ...store.get().view, spin: !!store.get().crystals.spin } });
     }());
 
     // ---------- the built block (rebuilt only when the crystal or the amount changes) ----------
@@ -676,6 +678,7 @@ export default {
       if (v.style && showAs.get() !== v.style) showAs.set(v.style);
       if (v.style && v.style !== lastStyle) draw(false);
       if (v.labels != null && !!v.labels !== labelTog.get()) labelTog.set(!!v.labels);
+      if (v.spin != null && !!v.spin !== !!s.crystals.spin) setCr({ spin: !!v.spin });
     });
     cleanup.push(unsub);
 

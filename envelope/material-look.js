@@ -388,8 +388,8 @@ function genWood() {
         let dx = u - kn[0]; let dy = v - kn[1];
         if (dx > 0.5) dx -= 1; else if (dx < -0.5) dx += 1;
         if (dy > 0.5) dy -= 1; else if (dy < -0.5) dy += 1;
-        if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) continue;
         const d = Math.hypot(dx, dy * 0.8);
+        if (d > 0.42) continue;
         t += 12 * Math.exp(-(d * d) / (18 * kn[2] * kn[2]));
         kd = Math.min(kd, d / kn[2]);
       }
@@ -628,19 +628,30 @@ function genWrb() {
 
 function genBoardGrain(base, o) {
   const N = 512; const R = rng(o.seed);
-  const gr = noise(N, N, 2, o.rows, o.seed + 1, 3, 0.55);
-  const gr2 = noise(N, N, 5, o.rows * 3, o.seed + 2, 2, 0.5);
-  const streak = noise(N, N, 3, 8, o.seed + 3, 2, 0.5);
-  const img = newImg(N, N); const H = new Float32Array(N * N);
-  for (let y = 0; y < N; y += 1) {
-    for (let x = 0; x < N; x += 1) {
-      const i = y * N + x;
-      const k = 1 + o.amp * (gr[i] - 0.5) + o.amp * 0.6 * (gr2[i] - 0.5) + 0.04 * (streak[i] - 0.5) + (R() - 0.5) * o.speck;
-      put(img.d, i, base[0] * k, base[1] * k, base[2] * k);
-      H[i] = 0.5 + 0.9 * (gr[i] - 0.5) + 0.5 * (gr2[i] - 0.5);
-    }
+  const mid = noise(N, N, 3, 3, o.seed + 1, 3, 0.5);
+  const peel = noise(N, N, 150, 150, o.seed + 2, 2, 0.5);
+  const img = newImg(N, N); const hb = newImg(N, N);
+  for (let i = 0; i < N * N; i += 1) {
+    const k = 1 + 0.07 * (mid[i] - 0.5) + o.peel * (peel[i] - 0.5) + (R() - 0.5) * o.speck;
+    put(img.d, i, base[0] * k, base[1] * k, base[2] * k);
+    const hv = (0.5 + 0.5 * (peel[i] - 0.5) + 0.2 * (mid[i] - 0.5)) * 255;
+    put(hb.d, i, hv, hv, hv);
   }
-  return { color: done(img), bump: grayCanvas(N, N, H) };
+  img.g.putImageData(img.id, 0, 0); hb.g.putImageData(hb.id, 0, 0);
+  // embossed wood grain: short soft horizontal strokes
+  for (let s = 0; s < o.strokes; s += 1) {
+    const x = R() * N; const y = R() * N; const len = 50 + R() * 190;
+    const dark = R() < 0.55; const a = 0.04 + R() * 0.07;
+    wrapped(N, N, x, y, 200, (px, py) => {
+      img.g.strokeStyle = dark ? `rgba(30,45,60,${a})` : `rgba(255,255,255,${a})`;
+      img.g.lineWidth = 0.8 + R() * 2.2;
+      img.g.beginPath(); img.g.moveTo(px - len / 2, py); img.g.quadraticCurveTo(px, py + (R() - 0.5) * 3, px + len / 2, py); img.g.stroke();
+      hb.g.strokeStyle = dark ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.3)';
+      hb.g.lineWidth = 1.2;
+      hb.g.beginPath(); hb.g.moveTo(px - len / 2, py); hb.g.lineTo(px + len / 2, py); hb.g.stroke();
+    });
+  }
+  return { color: img.c, bump: hb.c };
 }
 
 function genStucco() {
@@ -714,8 +725,8 @@ const GEN = {
   battR: () => genFibre([238, 124, 160], { seed: 321, base: 0.95, mot: 0.2, strands: 9000, len: 30, angle: 0.0, spread: 6.3, thick: 1.4 }),
   mwool: () => genFibre([142, 126, 66], { seed: 331, base: 0.92, mot: 0.24, strands: 9000, len: 26, angle: 0.15, spread: 1.0, thick: 1.0 }),
   xps: genXps, eps: genEps, piso: genPiso, pcore: genPcore, spf: genSpf, wrb: genWrb,
-  fc: () => genBoardGrain([112, 146, 172], { seed: 401, rows: 120, amp: 0.06, speck: 0.03 }),
-  vinyl: () => genBoardGrain([234, 220, 172], { seed: 411, rows: 40, amp: 0.035, speck: 0.015 }),
+  fc: () => genBoardGrain([112, 146, 172], { seed: 401, peel: 0.05, speck: 0.03, strokes: 260 }),
+  vinyl: () => genBoardGrain([234, 220, 172], { seed: 411, peel: 0.03, speck: 0.012, strokes: 70 }),
   stucco: genStucco, steel: genSteel, alum: genAlum,
 };
 
