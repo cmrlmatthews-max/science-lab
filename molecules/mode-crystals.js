@@ -97,6 +97,9 @@ const PLAIN = {
   },
 };
 
+// Pure metals are drawn as bare metal by the viewer, so the legend uses the same display tints.
+const METAL_TINT = { Fe: '#a79f98', Al: '#dde1e6', Cu: '#e08a57', Zn: '#a7aec6', Ti: '#aeb2ba', Mg: '#b9c9b4' };
+
 const AMOUNTS = ['One block', 'A few blocks', 'A chunk'];
 const MAX_ATOMS = 1500;
 const SHOW_AS = [
@@ -586,7 +589,7 @@ export default {
       paintPlane();
       paintNumbers();
       paintNb();
-      legendHost.replaceChildren(legend(Array.from(new Set(c.basis.map((b) => b.el))).map((sym) => ({ color: ELEMENTS[sym].color, label: ELEMENTS[sym].name }))));
+      legendHost.replaceChildren(legend(Array.from(new Set(c.basis.map((b) => b.el))).map((sym) => ({ color: (c.group === 'metal' && METAL_TINT[sym]) || ELEMENTS[sym].color, label: ELEMENTS[sym].name }))));
       summaryEl.textContent = `${p.name.replace(' at room temperature', '').replace(' when it is red hot', ', hot')} · ${p.shape} · ${neighborShort(c)}`;
     }
 

@@ -879,6 +879,7 @@ export default {
       const pv = posVel();
       if (sim.phase === 'orbit1') tfGroup.rotation.y = rotFor(sim.ang);
       craft.setPosition(disp(pv.r), k);
+      if (craft.setHeading && pv.v) craft.setHeading(pv.v);
       if (getT().showArrow) speedArrow.set(disp(pv.r), pv.v, k, 9);
       else speedArrow.setVisible(false);
       if (flash) {

@@ -39,9 +39,10 @@ const ASSET_NAME = {
 };
 // the photo covers this many inches on each side (tunable if a photo shows a different patch size)
 const ASSET_TILE = {
-  brick: 32, cmu: 32, concrete: 48, osb: 24, plywood: 24, batt: 12, minwool: 12, xps: 24, eps: 12, polyiso: 24, gypsum: 24,
-  fibercement: 12, wood: 12, steel: 12, stucco: 12, wrb: 12,
+  brick: 64, cmu: 32, concrete: 48, osb: 20, plywood: 24, batt: 16, minwool: 12, xps: 24, eps: 12, polyiso: 24, gypsum: 24,
+  fibercement: 12, wood: 18, steel: 12, stucco: 12, wrb: 12,
 };
+const MIRROR = new Set(['wood', 'batt', 'concrete']);
 // multiply tint applied to a photo, so a shared photo still reads as the swatch of each id
 const ASSET_TINT = { gyp_063: '#e6dcc0', gyp_sheath: '#9fc392' };
 
@@ -789,10 +790,12 @@ function loadAsset(name) {
   const url = new URL(`../assets/materials/${name}.jpg`, import.meta.url).href;
   new THREE.TextureLoader().load(url, (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    const wrap = MIRROR.has(name) ? THREE.MirroredRepeatWrapping : THREE.RepeatWrapping; // photos with a visible seam mirror-tile
+    tex.wrapS = wrap; tex.wrapT = wrap;
     tex.anisotropy = ANISO;
     tex.generateMipmaps = true;
     const bump = tex.clone();
+    bump.wrapS = wrap; bump.wrapT = wrap;
     bump.colorSpace = THREE.NoColorSpace;
     bump.needsUpdate = true;
     st.color = tex; st.bump = bump; st.status = 'ok';

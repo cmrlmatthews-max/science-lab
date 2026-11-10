@@ -459,6 +459,7 @@ export default {
       const t = ((clock.t % T) + T) % T;
       const s = positionAtTime(body.mu, elements, t);
       craft.setPosition(s.r, k);
+      if (craft.setHeading && s.v) craft.setHeading(s.v);
       const o = getOrb();
       if (o.showVelocity) {
         const rel = elements.vp > elements.va ? (s.speed - elements.va) / (elements.vp - elements.va) : 1;

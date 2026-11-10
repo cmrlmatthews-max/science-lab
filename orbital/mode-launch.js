@@ -560,6 +560,7 @@ export default {
     }
     function placeCraft() {
       craft.setPosition(sim.r, k);
+      if (craft.setHeading && sim.v) craft.setHeading(sim.v);
       if (getL().showArrow && model) speedArrow.set(sim.r, sim.v, k, 8);
       else speedArrow.setVisible(false);
       paintLive();
@@ -612,7 +613,7 @@ export default {
 
       if (bodyChanged) {
         if (bodyObj) bodyObj.dispose();
-        bodyObj = createBody(body, k, { minRadiusUnits: 1.2, graticule: true });
+        bodyObj = createBody(body, k, { minRadiusUnits: 1.2 });
         world.add(bodyObj.group);
         bodyIdBuilt = body.id;
         buildTime();

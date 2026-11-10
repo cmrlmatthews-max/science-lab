@@ -35,6 +35,8 @@
     }
   }
   .app-title { white-space: nowrap; }
+  /* The bottom panel holds few controls in this module, so the 3D view gets the height. */
+  @media (min-width: 900px) { .shell { grid-template-rows: minmax(0, 1fr) clamp(140px, 19vh, 200px); } }
 </style>
 </head>
 <body>

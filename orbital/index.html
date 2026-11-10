@@ -20,6 +20,8 @@
   /* Space is black in both color themes: no grid backdrop, true black behind the 3D canvas. */
   .stage-wrap, .stage { background: #000; background-image: none; }
   .app-title { white-space: nowrap; }
+  /* The bottom panel holds few controls in this module, so the 3D view gets the height. */
+  @media (min-width: 900px) { .shell { grid-template-rows: minmax(0, 1fr) clamp(140px, 19vh, 200px); } }
 </style>
 </head>
 <body>
