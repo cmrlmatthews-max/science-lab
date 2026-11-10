@@ -1,7 +1,7 @@
 // Science Lab service worker. Relative URLs only, so it works under a sub-path (GitHub Pages).
 // Bump CACHE when any file changes. If a mode worker adds files (assembly-*.js, bridge-*.js, water-*.js),
 // add them to FILES below (same for orbital/launch-*.js, orbits-*.js, transfer-*.js and molecules/molecules-*.js, crystals-*.js, compare-*.js).
-const CACHE = 'science-lab-v9';
+const CACHE = 'science-lab-v10';
 const FILES = [
   './',
   './envelope/',
@@ -57,6 +57,9 @@ const FILES = [
   './molecules/compare-data.js',
   './molecules/compare-glass-data.js',
   './molecules/compare-overlay.js',
+  './molecules/content-compare.js',
+  './molecules/content-crystals.js',
+  './molecules/content-molecules.js',
   './molecules/crystal-data.js',
   './molecules/elements.js',
   './molecules/index.html',
@@ -68,6 +71,9 @@ const FILES = [
   './molecules/molecule-data.js',
   './molecules/viewer.js',
   './orbital/bodies.js',
+  './orbital/content-launch.js',
+  './orbital/content-orbits.js',
+  './orbital/content-transfer.js',
   './orbital/index.html',
   './orbital/launch-model.js',
   './orbital/main.js',
@@ -76,10 +82,13 @@ const FILES = [
   './orbital/mode-transfer.js',
   './orbital/physics.js',
   './orbital/space.js',
+  './shared/card.js',
+  './shared/layers.js',
   './shared/scene.js',
   './shared/simple.js',
   './shared/style.css',
   './shared/ui.js',
+  './shared/units.js',
   './vendor/OrbitControls.js',
   './vendor/addons/RoomEnvironment.js',
   './vendor/addons/lines/Line2.js',
