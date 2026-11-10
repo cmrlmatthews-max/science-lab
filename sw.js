@@ -1,7 +1,7 @@
 // Science Lab service worker. Relative URLs only, so it works under a sub-path (GitHub Pages).
 // Bump CACHE when any file changes. If a mode worker adds files (assembly-*.js, bridge-*.js, water-*.js),
 // add them to FILES below (same for orbital/launch-*.js, orbits-*.js, transfer-*.js and molecules/molecules-*.js, crystals-*.js, compare-*.js).
-const CACHE = 'science-lab-v8';
+const CACHE = 'science-lab-v9';
 const FILES = [
   './',
   './envelope/',
@@ -24,9 +24,16 @@ const FILES = [
   './assets/space/moon_1024.jpg',
   './envelope/assembly-3d.js',
   './envelope/assembly-graph.js',
+  './envelope/bridge-flow.js',
+  './envelope/bridge-graph.js',
+  './envelope/bridge-model.js',
+  './envelope/bridge-parts.js',
   './envelope/bridge-scene.js',
   './envelope/bridge.js',
   './envelope/index.html',
+  './envelope/info-card.js',
+  './envelope/info-data.js',
+  './envelope/labels3d.js',
   './envelope/main.js',
   './envelope/material-look.js',
   './envelope/materials.js',
@@ -36,6 +43,9 @@ const FILES = [
   './envelope/physics.js',
   './envelope/vapor.js',
   './envelope/walls.js',
+  './envelope/water-build.js',
+  './envelope/water-fx.js',
+  './envelope/water-gfx.js',
   './envelope/water.js',
   './icons/apple-touch-icon.png',
   './icons/icon-192.png',
