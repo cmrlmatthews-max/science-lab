@@ -217,7 +217,7 @@ export function buildErrors(env) {
       pts = [[30, 40.5, GLASS_Z + 0.12], [30, 26.3, GLASS_Z + 0.12], [30, 26.05, fz[1] + 0.05], [30, 25.9, fz[1] + 0.3], [30, 24.5, fz[1] + 0.45], [30, pt(8.5) + 0.08, 8.9], [30, yy + 0.04, zl - 0.2], [30, yy - 0.4, zl + 0.4]];
     }
     if (p.errorId === 'no_gap') pts = pts.map((q) => [q[0], q[1], Math.min(q[2], CAV0 + 0.05)]);
-    fx.addStream(g, pts.map((q) => V(T, q)), p.kind, { r: 0.3, speed: p.kind === 'shed' ? 1.25 : 1, unit: 22 });
+    fx.addStream(g, pts.map((q) => V(T, q)), p.kind, { r: 0.6, speed: p.kind === 'shed' ? 1.25 : 1, unit: 22 });
   });
   if (noWeep) fx.addPool(g, [0.6, 59.4, BASE + 0.15, 6.4, CAV0 + 0.1, brick0 - 0.05]);
   tr.leaks.forEach((l) => {
@@ -259,9 +259,9 @@ export function buildErrors(env) {
 
   return {
     calls, hot,
-    frame: { box: [-3, -10, 0, 66, 64, 12], dir: [0.82, 0.22, 1.1], pad: 0.98 },
+    frame: { box: [-3, -10, 0, 66, 72, 12], dir: [0.82, 0.22, 1.1], pad: 0.98 },
     light: { dir: [-0.6, 0.7, 0.75], floorY: -5.05 },
-    markers: [{ text: 'Outside · rain', pos: [60, 62, face + 6], tone: 'cold' }, { text: 'Inside · dry', pos: [2, 62, -3], tone: 'warm' }],
+    markers: [{ text: 'Outside · rain', pos: [58, 71, face + 6], tone: 'cold' }, { text: 'Inside · dry', pos: [6, 71, -3], tone: 'warm' }],
     rainBox: rb,
   };
 }

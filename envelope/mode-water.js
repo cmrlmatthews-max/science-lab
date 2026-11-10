@@ -158,6 +158,29 @@ export default {
       });
     }
 
+    // keep every callout inside the canvas horizontally (layoutCallouts only moves them vertically)
+    function clampX() {
+      const dom = stage.renderer && stage.renderer.domElement;
+      if (!dom) return;
+      const r = dom.getBoundingClientRect();
+      if (!r.width) return;
+      const cam = stage.camera;
+      callouts.forEach((c) => {
+        if (!c.object.visible) return;
+        const cr = c.clientRect();
+        let dx = 0;
+        if (cr.left < r.left + 4) dx = r.left + 4 - cr.left;
+        else if (cr.right > r.right - 4) dx = r.right - 4 - cr.right;
+        if (!dx) return;
+        const w = c.labelWorld();
+        const pr = w.clone().project(cam);
+        pr.x += (dx / r.width) * 2;
+        const tgt = pr.unproject(cam);
+        c.setOffset(tgt.sub(c.object.position));
+      });
+      stage.requestRender();
+    }
+
     let layoutRaf = 0;
     function relayout() {
       if (layoutRaf) return;
@@ -167,6 +190,7 @@ export default {
           if (!callouts.length || !S().labels) return;
           callouts.forEach((c, i) => c.setOffset(baseOffsets[i]));
           layoutCallouts(callouts, stage);
+          clampX();
         });
       });
     }

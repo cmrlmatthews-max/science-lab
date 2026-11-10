@@ -61,7 +61,7 @@ export function createGfx(stage) {
   // ---- renderer, light, environment
   if (R) {
     R.toneMapping = T.ACESFilmicToneMapping;
-    R.toneMappingExposure = theme.dark ? 0.96 : 0.9;
+    R.toneMappingExposure = theme.dark ? 0.92 : 0.8;
     R.outputColorSpace = T.SRGBColorSpace;
     R.shadowMap.enabled = true;
     R.shadowMap.type = T.PCFSoftShadowMap;
@@ -99,13 +99,12 @@ export function createGfx(stage) {
       key.target.position.copy(_c);
       const s = key.shadow;
       const MS = stage.camera && window.matchMedia('(max-width: 899px)').matches ? 1024 : 2048;
-      s.mapSize.set(MS, MS);
+      if (s.mapSize.x !== MS) { s.mapSize.set(MS, MS); if (s.map) { s.map.dispose(); s.map = null; } }
       s.camera.left = -r; s.camera.right = r; s.camera.top = r; s.camera.bottom = -r;
       s.camera.near = r * 0.4; s.camera.far = r * 6;
       s.bias = -0.0003; s.normalBias = 0.04 * Math.max(1, r / 40);
       s.camera.updateProjectionMatrix();
       key.target.updateMatrixWorld();
-      if (s.map) { s.map.dispose(); s.map = null; }
     }
     floor.position.y = floorY == null ? box.min.y - 0.05 : floorY;
     floor.position.x = _s.center.x; floor.position.z = _s.center.z;
@@ -148,7 +147,7 @@ export function createGfx(stage) {
     stucco: () => look('stucco'),
     eifs: () => { const m = look('stucco'); m.color.set('#f1ebdd'); m.roughness = 0.92; m.bumpScale = 0.7; return m; },
     // housewrap: white, printed, sheet thin enough to be seen from both sides
-    wrb: () => { const m = look('wrb'); m.side = T.DoubleSide; m.roughness = 0.7; m.color && m.color.multiplyScalar(0.72); m.envMapIntensity = 0.5; return m; },
+    wrb: () => { const m = look('wrb'); m.side = T.DoubleSide; m.roughness = 0.7; m.color && m.color.multiplyScalar(0.55); m.envMapIntensity = 0.5; return m; },
     // seam tape on housewrap: bright foil
     tape: () => std({ color: '#d9dde1', metalness: 0.55, roughness: 0.34, envMapIntensity: 1.2, side: T.DoubleSide }),
     // sheet metal
@@ -287,9 +286,13 @@ export function createGfx(stage) {
     WET.forEach((key) => {
       const m = mats.get(key);
       if (!m) return;
-      if (!m.userData.dry) m.userData.dry = { c: m.color.clone(), r: m.roughness };
-      m.color.copy(m.userData.dry.c).multiplyScalar(1 - 0.1 * k);
-      m.roughness = m.userData.dry.r * (1 - 0.4 * k);
+      const u = m.userData;
+      if (u.wetK == null) { u.baseR = m.roughness; u.wetK = 0; }
+      // undo the previous wet factor on the current colour (the look may have changed it after its texture loaded)
+      m.color.multiplyScalar(1 / (1 - 0.1 * u.wetK));
+      m.color.multiplyScalar(1 - 0.1 * k);
+      m.roughness = u.baseR * (1 - 0.4 * k);
+      u.wetK = k;
     });
     stage.requestRender();
   }

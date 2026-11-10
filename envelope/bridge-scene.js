@@ -19,7 +19,8 @@ const EPS_FACE = 0.05;
 const EPS_LINE = 0.09;
 const EPS_IFACE = 0.05;
 const GAP_PLAN = 14;
-const GAP_SECTION = 7;
+const GAP_SECTION = 9;
+const SEC_DIR = new THREE.Vector3(-1, 0.5, -0.14);
 
 const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
@@ -93,6 +94,7 @@ export function createBridgeScene(stage, stageEl) {
     t0: performance.now(),
     framedFor: '',
     gapPlan: GAP_PLAN,
+    gapSec: GAP_SECTION,
   };
 
   // ---------------------------------------------------------------- lighting like the Assembly wall
@@ -165,8 +167,12 @@ export function createBridgeScene(stage, stageEl) {
     const zmin = -S_IN; const zmax = s.r.depthIn + (s.r.detailId === 'slab' ? S_OUT : 0);
     const w = zmax - zmin;
     const cz = (zmin + zmax) / 2;
-    const z = both ? (k === 0 ? -1 : 1) * (w + GAP_SECTION) / 2 - cz : -cz;
-    return new THREE.Vector3(0, 0, z);
+    const z = both ? (k === 0 ? -1 : 1) * (w + st.gapSec) / 2 - cz : -cz;
+    // keep both models on the same screen height: the view is slightly oblique, so a shift along z also shifts them up the screen
+    const d = SEC_DIR.clone().normalize();
+    const rt = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), d).normalize();
+    const up = new THREE.Vector3().crossVectors(d, rt).normalize();
+    return new THREE.Vector3(0, -(z * up.z) / up.y, z);
   }
 
   /** Anchor of a label in the group's local frame. Plan labels sit at the model edge that faces the label column. */
@@ -557,29 +563,36 @@ export function createBridgeScene(stage, stageEl) {
         c.api.userData.secondary = dup;
         c.api.setVisible(!hide && !dup);
       });
-      const topItems = own.filter((c) => c.api.userData.place === 'top' && !c.api.userData.secondary).map((c) => ({ c, a: toPx(c.api.object.position) })).sort((a, b) => a.a.x - b.a.x);
-      const n = topItems.length;
+      const topItems = own.filter((c) => c.api.userData.place === 'top' && !c.api.userData.secondary).map((c) => ({ c, api: c.api, a: toPx(c.api.object.position) }));
+      topItems.push({ c: null, api: s.cold, a: toPx(s.cold.object.position) });
+      topItems.sort((u, v) => u.a.x - v.a.x);
       const T2 = 22;
-      topItems.forEach((it, idx) => {
-        const y = bb.y0 - 14 - (n - 1 - idx) * T2;
-        setPx(it.c.api, it.a.x - 4, y, 'right');
-      });
+      let ty = bb.y0 - 14;
+      for (let idx = topItems.length - 1; idx >= 0; idx--) {
+        const it = topItems[idx];
+        const extra = Math.max(0, it.api.size.h - 26);
+        ty -= extra;
+        setPx(it.api, it.a.x - 4, ty, 'right');
+        ty -= T2;
+      }
       own.forEach((c) => {
         const pl = c.api.userData.place;
         if (pl === 'roomSlab') {
-          const stubTop = toPx(new THREE.Vector3(0, s.model.decor.floorTop, -S_IN).add(s.group.position));
-          setPx(c.api, stubTop.x + 2, stubTop.y - 30, 'right');
+          const stubBot = toPx(new THREE.Vector3(0, s.model.decor.slab.y0, -S_IN * 0.55).add(s.group.position));
+          setPx(c.api, stubBot.x - 20, stubBot.y + 34, 'right');
         } else if (pl === 'balcony') {
           const stubBot = toPx(new THREE.Vector3(0, s.model.decor.slab.y0, s.r.depthIn + S_OUT).add(s.group.position));
           setPx(c.api, stubBot.x - 6, stubBot.y + 30, 'left');
         }
       });
-      const cold = toPx(s.cold.object.position);
-      setPx(s.cold, cold.x - 6, cold.y - 54, 'left');
       const inP = toPx(new THREE.Vector3(0, 0, -S_IN).add(s.group.position));
       const outP = toPx(new THREE.Vector3(0, 0, s.r.depthIn + (s.r.detailId === 'slab' ? S_OUT : 0)).add(s.group.position));
-      s.markers[0].setPosition(pxToWorld(inP.x + 46, bb.y1 + 16, new THREE.Vector3(0, 0, -S_IN).add(s.group.position)));
-      s.markers[1].setPosition(pxToWorld(outP.x - 50, bb.y1 + 16, new THREE.Vector3(0, 0, s.r.depthIn).add(s.group.position)));
+      const mw = 116;
+      const mid = (inP.x + outP.x) / 2;
+      const inX = Math.min(inP.x + 46, mid - mw / 2 - 3);
+      const outX = Math.max(outP.x - 50, mid + mw / 2 + 3);
+      s.markers[0].setPosition(pxToWorld(inX, bb.y1 + 16, new THREE.Vector3(0, 0, -S_IN).add(s.group.position)));
+      s.markers[1].setPosition(pxToWorld(outX, bb.y1 + 16, new THREE.Vector3(0, 0, s.r.depthIn).add(s.group.position)));
       titleEls[k].anchor = { x: (inP.x + outP.x) / 2, y: bb.y1 + 44 };
     });
     updateOverlays();
@@ -602,10 +615,10 @@ export function createBridgeScene(stage, stageEl) {
   // ---------------------------------------------------------------- camera
   function directionFor() {
     const s = sides.find(Boolean);
-    return s && s.model.plan ? new THREE.Vector3(0.0, 1.0, -0.62) : new THREE.Vector3(-1, 0.42, -0.5);
+    return s && s.model.plan ? new THREE.Vector3(0.0, 1.0, -0.62) : SEC_DIR.clone();
   }
 
-  function fitBox(box, dir, pad) {
+  function fitBox(box, dir, pad, shift) {
     const cam = stage.camera;
     const d = dir.clone().normalize();
     const target = box.getCenter(new THREE.Vector3());
@@ -621,6 +634,7 @@ export function createBridgeScene(stage, stageEl) {
       const back = rel.dot(d); const rr = Math.abs(rel.dot(right)); const uu = Math.abs(rel.dot(upv));
       dist = Math.max(dist, back + (rr * pad) / th, back + (uu * pad) / tv);
     })));
+    if (shift) target.add(shift);
     cam.position.copy(target).addScaledVector(d, dist);
     cam.near = Math.max(0.1, dist / 200);
     cam.far = Math.max(1000, dist * 30);
@@ -630,7 +644,7 @@ export function createBridgeScene(stage, stageEl) {
     stage.controls.maxDistance = dist * 4;
     stage.controls.update();
     cam.updateMatrixWorld();
-    return { target, dist };
+    return { target, dist, right, upv };
   }
 
   function layoutAll() {
@@ -671,11 +685,12 @@ export function createBridgeScene(stage, stageEl) {
     const dir = directionFor();
     const plan = sides[vis[0]].model.plan;
     const boxNow = () => { const bx = new THREE.Box3(); vis.forEach((k) => bx.union(worldBox(k))); return bx; };
-    stage.camera.fov = plan ? 22 : 26;
+    stage.camera.fov = plan ? 22 : 11;
     stage.camera.aspect = stage.renderer.domElement.clientWidth / Math.max(1, stage.renderer.domElement.clientHeight);
-    let pad = 1.04;
-    for (let pass = 0; pass < 9; pass++) {
-      fitBox(boxNow(), dir, pad);
+    const shift = new THREE.Vector3();
+    let info = null;
+    const tryPad = (pad) => {
+      info = fitBox(boxNow(), dir, pad, shift);
       if (plan && vis.length === 2) {
         // the column of names between the two models needs room: size the gap from the current scale
         const a0 = toPx(new THREE.Vector3(0, 0, 0)); const a1 = toPx(new THREE.Vector3(10, 0, 0));
@@ -686,7 +701,7 @@ export function createBridgeScene(stage, stageEl) {
         if (Math.abs(need - st.gapPlan) > 0.35) {
           st.gapPlan = need;
           layoutAll();
-          fitBox(boxNow(), dir, pad);
+          info = fitBox(boxNow(), dir, pad, shift);
         }
       }
       placeLabels();
@@ -695,21 +710,35 @@ export function createBridgeScene(stage, stageEl) {
       let x0 = 1e9; let x1 = -1e9; let y0 = 1e9; let y1 = -1e9;
       const grow = (r2) => { x0 = Math.min(x0, r2.left); x1 = Math.max(x1, r2.right); y0 = Math.min(y0, r2.top); y1 = Math.max(y1, r2.bottom); };
       vis.forEach((k) => {
-        const s = sides[k];
-        s.callouts.forEach((c) => { if (c.api.object.visible) { const rr = c.api.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); } });
-        { const rr = s.cold.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); }
-        const b = worldBox(k);
-        [b.min.x, b.max.x].forEach((x) => [b.min.y, b.max.y].forEach((y) => [b.min.z, b.max.z].forEach((z) => { const p = toPx(new THREE.Vector3(x, y, z)); grow({ left: p.x, right: p.x, top: p.y, bottom: p.y }); })));
+        const s2 = sides[k];
+        s2.callouts.forEach((c) => { if (c.api.object.visible) { const rr = c.api.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); } });
+        { const rr = s2.cold.clientRect(); grow({ left: rr.left - rect.left, right: rr.right - rect.left, top: rr.top - rect.top, bottom: rr.bottom - rect.top }); }
+        const b2 = worldBox(k);
+        [b2.min.x, b2.max.x].forEach((x) => [b2.min.y, b2.max.y].forEach((y) => [b2.min.z, b2.max.z].forEach((z) => { const p = toPx(new THREE.Vector3(x, y, z)); grow({ left: p.x, right: p.x, top: p.y, bottom: p.y }); })));
         const ta = titleEls[k].anchor;
         if (ta) { const tw = Math.min(rect.width * 0.46, 40 + (titleEls[k].text.textContent.length * 6.6)); grow({ left: ta.x - tw / 2, right: ta.x + tw / 2, top: ta.y, bottom: ta.y + 28 }); }
       });
       const m = 10;
       const over = Math.max(0, (m - x0) / rect.width, (x1 - (rect.width - m)) / rect.width, (m - y0) / rect.height, (y1 - (rect.height - m)) / rect.height);
-      const under = Math.max((x1 - x0) / (rect.width - 2 * m), (y1 - y0) / (rect.height - 2 * m));
-      if (over <= 0.002 && under > 0.94) break;
-      if (over > 0.002) pad *= 1 + over * 1.15 + 0.02;
-      else pad *= Math.max(0.8, under * 1.01);
+      return { over, x0, x1, y0, y1, rect };
+    };
+    const solve = () => {
+      let lo = 0.4; let hi = 7;
+      for (let it = 0; it < 14; it++) {
+        const mid = (lo + hi) / 2;
+        if (tryPad(mid).over <= 0.002) hi = mid; else lo = mid;
+      }
+      return tryPad(hi);
+    };
+    for (let round = 0; round < 2; round++) {
+      const r = solve();
+      // centre what is drawn in the canvas, then solve again
+      const vf = THREE.MathUtils.degToRad(stage.camera.fov);
+      const ppi = r.rect.height / (2 * info.dist * Math.tan(vf / 2));
+      shift.addScaledVector(info.right, ((r.x0 + r.x1) / 2 - r.rect.width / 2) / ppi);
+      shift.addScaledVector(info.upv, (r.rect.height / 2 - (r.y0 + r.y1) / 2) / ppi);
     }
+    solve();
     st.userMoved = false;
     st.framedFor = `${st.detailId}|${st.single}`;
     stage.requestRender();

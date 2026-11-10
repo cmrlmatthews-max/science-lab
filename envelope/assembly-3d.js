@@ -862,7 +862,7 @@ export function createWall3D(stage) {
     const an = cur.an;
     const name = nar ? o.short : o.long;
     let sub = null;
-    if (show === 'temp' && o.kind === 'layer' && an && an.layers[o.li]) {
+    if (show === 'temp' && !nar && o.kind === 'layer' && an && an.layers[o.li]) {
       const L = an.layers[o.li];
       sub = `${fmt0(L.tIn)} to ${fmt0(L.tOut)} °F`;
     } else if (o.kind === 'stud' && !nar) sub = o.sub;
@@ -912,7 +912,7 @@ export function createWall3D(stage) {
         ? (warmSide === 'interior' ? 'Outside is colder' : 'Inside is colder')
         : (warmSide === 'interior' ? 'Outside of this line is colder' : 'Inside of this line is colder');
       const dewAtRight = isNarrow();
-      dewCallout.setAnchor(new THREE.Vector3(dewAtRight ? e.x1 + ext - 0.6 : e.x0 - 0.07, dewAtRight ? e.h + 0.3 : hRib, zD + k * gp));
+      dewCallout.setAnchor(new THREE.Vector3(dewAtRight ? e.x1 + ext - 0.6 : (section ? sectionX + 0.07 : e.x0 - 0.07), dewAtRight ? e.h + 0.3 : hRib, zD + k * gp));
       dewCallout.userData.layerIndex = k;
       const dt = `Dew point ${fmt0(an.dewPointF)} °F\n${second}`;
       if (dt !== dewCallout.text) dewCallout.setText(dt);
