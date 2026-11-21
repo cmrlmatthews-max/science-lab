@@ -10,6 +10,9 @@ import { createWall3D, CONTROL_LEGEND, CONTROL_COLORS } from './assembly-3d.js';
 import { createGraph } from './assembly-graph.js';
 import { createInfoCard, infoChip, infoButton } from './info-card.js';
 import { infoForMaterial } from './info-data.js';
+import { question, answer, tryThis } from '../shared/simple.js';
+import { story, tile, moreLink } from '../shared/layers.js';
+import { TEXT } from './content-assembly.js';
 
 const CSS = `
 .asm-editor{display:flex;flex-direction:column;gap:12px;padding:12px;margin:-6px 0 6px 10px;background:var(--paper-2);border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius) var(--radius)}
@@ -40,6 +43,16 @@ const CSS = `
 .asm-hint{position:absolute;z-index:5;bottom:8px;left:8px;right:8px;margin:0 auto;width:max-content;max-width:min(560px,calc(100% - 16px));display:flex;align-items:center;gap:8px;padding:5px 6px 5px 11px;background:var(--paper-2);border:1px solid var(--line-strong);border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,0,0,.14);font:400 12.5px/1.35 var(--font-body);color:var(--ink-2)}
 .asm-hint button{flex:none;position:relative;width:24px;height:24px;border:1px solid var(--line-strong);border-radius:50%;background:var(--paper-3);color:var(--ink-2);padding:0;font-size:14px;line-height:1}
 .asm-hint button::after{content:"";position:absolute;inset:-10px}
+.asm-stack{display:flex;flex-direction:column;gap:14px}
+.asm-choices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.asm-choice{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:84px;padding:10px 6px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--paper-2);color:var(--ink);font:600 14px/1.25 var(--font-body);cursor:pointer;text-align:center}
+.asm-choice:hover{border-color:var(--ink-2)}
+.asm-choice:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.asm-choice[data-selected="true"]{background:var(--accent-soft);border-color:var(--accent-edge);box-shadow:inset 0 0 0 1px var(--accent-edge);color:var(--accent)}
+.asm-choice-ico{display:block;width:44px;height:40px}
+.asm-choice-ico svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.asm-plainlegend{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.asm-gloss{display:flex;flex-direction:column;gap:4px;margin-top:10px}
 `;
 
 // Module-level view state so it survives a mode switch.
@@ -50,6 +63,14 @@ const ROLE = {
   structure: 'Structure', finish: 'Finish', cladding: 'Cladding', airspace: 'Air space',
 };
 const SHORT = (n) => n.split(',')[0];
+const ICONS = {
+  thin: '<svg viewBox="0 0 48 44"><rect x="14" y="6" width="5" height="32"/><rect x="19" y="6" width="10" height="32"/><rect x="29" y="6" width="5" height="32"/></svg>',
+  thick: '<svg viewBox="0 0 48 44"><rect x="6" y="6" width="5" height="32"/><rect x="11" y="6" width="22" height="32"/><rect x="33" y="6" width="9" height="32"/><path d="M13 12l8 6-8 6 8 6M23 12l8 6-8 6 8 6"/></svg>',
+  outside: '<svg viewBox="0 0 48 44"><rect x="4" y="6" width="5" height="32"/><rect x="9" y="6" width="12" height="32"/><rect x="21" y="6" width="5" height="32"/><rect x="26" y="6" width="14" height="32"/><path d="M28 12l9 6-9 6 9 6"/></svg>',
+};
+const FOAM = ['xps', 'eps', 'polyiso'];
+const SHEATH = ['osb', 'plywood', 'gyp_sheath'];
+const F_TO_C = (f) => (f - 32) / 1.8;
 const HINT_KEY = 'envelopeLab.infoHintDismissed';
 const GLASS_R = 0.88; // single clear glass pane, BCI 7.40
 const BTU_PER_BULB = 341.2; // one 100 W bulb, Btu/h
@@ -92,7 +113,7 @@ export default {
   panelTitles: { a: 'Layers', b: 'Results', c: 'Climate' },
   _cleanup: [],
   mount(ctx) {
-    const { stage, stageEl, panelA, panelB, panelC, summaryEl, store } = ctx;
+    const { stage, stageEl, panelA, panelB, panelC, summaryEl, store, layers, setPanelMin } = ctx;
     const cleanup = [];
     this._cleanup = cleanup;
 
@@ -110,7 +131,7 @@ export default {
     // live values shown at the top of a card
     const layerExtra = (i) => {
       const L = an.layers[i];
-      if (!L) return [];
+      if (!L || !layers.is(4)) return [];
       return [
         { label: 'R-value used here', value: fmt(L.r, 2) },
         { label: 'Thickness', value: inch(L.thickness) },
@@ -119,6 +140,7 @@ export default {
       ];
     };
     const dewExtra = () => {
+      if (!layers.is(4)) return [];
       const c = store.get().climate;
       const inside = an.warmSide === 'interior';
       return [
@@ -126,7 +148,7 @@ export default {
         { label: inside ? 'Inside air' : 'Outside air', value: inside ? `${fmt(c.tIn, 0)} °F, ${fmt(c.rhIn, 0)}% RH` : `${fmt(c.tOut, 0)} °F, ${fmt(c.rhOut, 0)}% RH` },
       ];
     };
-    const condExtra = () => (an.condensation
+    const condExtra = () => (!layers.is(4) ? [] : an.condensation
       ? [{ label: 'Surface now', value: `${fmt(an.condensation.tempF, 1)} °F` }, { label: 'Dew point now', value: `${fmt(an.dewPointF, 1)} °F` }]
       : [{ label: 'Dew point now', value: `${fmt(an.dewPointF, 1)} °F` }]);
     // 3D hit -> { id, extra } for the card
@@ -192,17 +214,15 @@ export default {
       value: store.get().vapor.zone,
       onChange: (v) => store.set({ vapor: { ...store.get().vapor, zone: v } }),
     });
-    panelA.append(
-      section('Wall', wallSel.el),
-      section(
-        'Layers',
-        el('div', { class: 'asm-end', text: 'Interior' }),
-        listEl,
-        el('div', { class: 'asm-end', text: 'Exterior' }),
-        el('div', { class: 'asm-btns' }, addBtn, resetBtn),
-      ),
-      section('Vapor retarder', clsSeg.el, zoneSel.el),
-    );
+    const secWall = layers.gate(section('Wall', wallSel.el), 3, 5);
+    const secLayers = layers.gate(section(
+      'Layers',
+      el('div', { class: 'asm-end', text: 'Interior' }),
+      listEl,
+      el('div', { class: 'asm-end', text: 'Exterior' }),
+      el('div', { class: 'asm-btns' }, addBtn, resetBtn),
+    ), 4, 5);
+    const secVapor = layers.gate(section('Vapor retarder', clsSeg.el, zoneSel.el), 5, 5);
 
     function editorFor(i) {
       const wall = store.get().wall;
@@ -334,11 +354,23 @@ export default {
     const vaporChipEls = [infoChip('vapor_retarder'), infoChip('vapor_classes', 'Vapor classes'), infoChip('climate_zone', 'Climate zone')];
     const leakBox = el('div', { class: 'section-body' });
     const leakChipEl = infoChip('air_leakage');
+    // level 4: six stat tiles, US first then metric, one comparison line each
+    const T4 = TEXT.l4.tiles;
+    const tR = tile({ label: T4.r.label, us: '', si: '', compare: '' });
+    const tU = tile({ label: T4.u.label, us: '', si: '', compare: '' });
+    const tQ = tile({ label: T4.q.label, us: '', si: '', compare: '' });
+    const tS = tile({ label: T4.sheathing.label, us: '', si: '', compare: '' });
+    const tD = tile({ label: T4.dew.label, us: '', si: '', compare: '' });
+    const tC = tile({ label: T4.cond.label, us: '', si: '', compare: '' });
+    const tileLabel = (t) => t.el.querySelector('.sl-tile-label');
+    const glossEl = el('div', { class: 'asm-gloss' }, Object.values(TEXT.l4.glosses).map((g) => el('p', { class: 'asm-note', text: g })));
+    const tilesBox = layers.gate(el('div', {}, el('div', { class: 'sl-tiles' }, tR.el, tU.el, tQ.el, tS.el, tD.el, tC.el), glossEl), 4, 4);
     panelB.append(
-      section('Numbers', Object.assign(stats(sR.el, sU.el, sQ.el, sBig.el, sDew.el, sFrame.el), { className: 'stats asm-stats' })),
-      section('Condensation', condBox, condFix, condChips),
-      section('Vapor retarder', vaporBox),
-      section('Air leakage', leakBox),
+      tilesBox,
+      layers.gate(section('Numbers', Object.assign(stats(sR.el, sU.el, sQ.el, sBig.el, sDew.el, sFrame.el), { className: 'stats asm-stats' })), 5, 5),
+      layers.gate(section('Condensation', condBox, condFix, condChips), 5, 5),
+      layers.gate(section('Vapor retarder', vaporBox), 5, 5),
+      layers.gate(section('Air leakage', leakBox), 5, 5),
     );
 
     // ---------------------------------------------------------------- panel C
@@ -347,7 +379,7 @@ export default {
       label: 'Show',
       options: [{ value: 'materials', label: 'Materials' }, { value: 'temp', label: 'Temperature' }, { value: 'control', label: 'Control layers' }],
       value: keep.show,
-      onChange: (v) => { keep.show = v; wall3d.setShow(v); renderLegend(); },
+      onChange: (v) => { keep.show = v; wall3d.setShow(v); renderLegend(); paintPlainLegend(); },
     });
     showSeg.el.classList.add('asm-show');
     const exSl = slider({
@@ -395,12 +427,23 @@ export default {
     const graphSec = section('Temperature through the wall', graphBox, legendBox);
     graphSec.querySelector('.section-title').insertBefore(infoButton('interior_surface_temp', { label: 'Temperature through the wall' }), null);
     cleanup.push(() => graph.dispose());
+    const plainLegend = layers.gate(el('div', { class: 'asm-plainlegend' }), 3, 4);
+    layers.gate(slTin.el, 4, 5); layers.gate(slRhIn.el, 4, 5); layers.gate(slTout.el, 4, 5); layers.gate(slRhOut.el, 4, 5);
     panelC.append(
-      section('View', showSeg.el, exSl.el, togRow(secTg, infoButton('section_cut')), lblTg.el, el('div', { class: 'asm-btns' }, resetView)),
-      section('Climate', presetSel.el, slTin.el, slRhIn.el, slTout.el, slRhOut.el),
-      section('Air and area', slLeak.el, slArea.el),
-      graphSec,
+      layers.gate(section('View', showSeg.el, exSl.el, togRow(secTg, infoButton('section_cut')), lblTg.el, plainLegend, el('div', { class: 'asm-btns' }, resetView)), 3, 5),
+      layers.gate(section('Climate', presetSel.el, slTin.el, slRhIn.el, slTout.el, slRhOut.el), 3, 5),
+      layers.gate(section('Air and area', slLeak.el, slArea.el), 5, 5),
+      layers.gate(graphSec, 5, 5),
     );
+
+    function paintPlainLegend() {
+      plainLegend.replaceChildren();
+      if (keep.show === 'temp') plainLegend.append(thermalBar({ min: 'Cold', max: 'Warm' }), el('div', { class: 'asm-note', text: TEXT.l3.legend.temp }));
+      else if (keep.show === 'control') {
+        TEXT.l3.legend.control.forEach((r) => plainLegend.append(el('div', { class: 'asm-ctl-row' },
+          el('span', { class: 'swatch', style: { background: CONTROL_COLORS[r.key] } }), el('span', { class: 'asm-ctl-t', text: r.text }))));
+      }
+    }
 
     function renderLegend() {
       const c = store.get().climate;
