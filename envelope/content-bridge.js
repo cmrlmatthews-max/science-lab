@@ -149,7 +149,7 @@ export const TEXT = {
     controls: {
       detail: 'Part of the wall',
       fix: 'Compare with',
-      view: 'Show',
+      view: 'Look at',
       arrows: 'Heat arrows',
       labels: 'Names',
     },

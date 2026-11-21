@@ -14,10 +14,9 @@ export const PLAN_H = 5;       // inches of wall below the plan cut
 export const LX = 12;          // inches the section parts run behind the cut
 export const S_IN = 12;        // room-side stub (floor slab) in inches
 export const S_OUT = 10;       // balcony stub in inches
-// Standoff brackets drawn behind the cut (x in inches). The cut passes through the middle of the first bracket.
-// The spacing is a picture: the solver spreads 4 in. brackets over 48 in., which would not fit in 12 in.
-const BRACKETS = [[0, 1.5], [7.5, 10.5]];
-const BRACKET_GAPS = [[1.5, 7.5], [10.5, LX]];
+// Standoff brackets (x in inches behind the cut), 3 in. wide; the cut passes through the middle of the first one.
+const BRACKETS = [[0, 1.5], [4.5, 7.5], [10.5, 12]];
+const BRACKET_GAPS = [[1.5, 4.5], [7.5, 10.5]];
 
 // What each solver material is, as a real part. look = body look id, cut = look of the cut face.
 const PART = {
@@ -153,47 +152,42 @@ export function buildModel(r) {
   const normalOut = plan ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(-1, 0, 0);
 
   // ---- body from the solver grid
-  // Standoff version of the shelf angle: the solver treats the steel cells as brackets spread along the wall (a small
-  // fraction steel, the rest insulation). In 3D the steel is drawn as separate brackets with the insulation that the
-  // cell replaces passing between them. Geometry only: the grid, the solver and every number stay as they are.
+  // Shelf angle: the steel is also drawn as a see-through "x-ray" copy (id __xray) so that what runs behind the cut can be seen.
+  // The continuous angle is one long strip. The standoff version is separate brackets with the insulation (or air) that each
+  // bracket cell replaces passing between them. The solver spreads 4 in. brackets over 48 in.; the 3D spacing is a picture.
+  // Geometry only: the grid, the solver and every number are unchanged.
   const steelIdx = idxOf('steel');
-  const standoff = !plan && r.detailId === 'shelf' && r.variantId === 'standoff' && steelIdx >= 0;
+  const shelf = !plan && r.detailId === 'shelf' && steelIdx >= 0;
+  const standoff = shelf && r.variantId === 'standoff';
+  const addBox = (part, q, x0, x1, withCut) => {
+    if (plan) mesher.box(part.look, [(q.i0 - nx / 2) * c, 0, q.j0 * c], [(q.i1 - nx / 2) * c, PLAN_H, q.j1 * c], { cut: { face: cutFace, look: part.cut } });
+    else mesher.box(part.look, [x0, q.i0 * c, q.j0 * c], [x1, q.i1 * c, q.j1 * c], withCut ? { cut: { face: cutFace, look: part.cut } } : {});
+  };
   const rects = mergeRects(r.mats, nx, ny);
-  const bracketRects = [];
-  const fillerRects = [];
-  rects.forEach((q) => {
-    const part = pal[q.m];
-    if (standoff && q.m === steelIdx) { bracketRects.push(q); return; }
-    if (plan) {
-      mesher.box(part.look, [(q.i0 - nx / 2) * c, 0, q.j0 * c], [(q.i1 - nx / 2) * c, PLAN_H, q.j1 * c], { cut: { face: cutFace, look: part.cut } });
-    } else {
-      mesher.box(part.look, [0, q.i0 * c, q.j0 * c], [LX, q.i1 * c, q.j1 * c], { cut: { face: cutFace, look: part.cut } });
-    }
-  });
-  if (standoff) {
-    // what each bracket cell replaces: the nearest neighbour that is not steel (mineral wool, or the air space)
-    const filler = new Int16Array(nx * ny).fill(-1);
-    const nbr = [[-1, 0], [0, 1], [1, 0], [0, -1]];
-    bracketRects.forEach((q) => {
-      for (let j = q.j0; j < q.j1; j++) for (let i = q.i0; i < q.i1; i++) {
-        let f = -1;
-        for (const [di, dj] of nbr) {
-          const ii = i + di; const jj = j + dj;
-          if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;
-          const m = r.mats[jj * nx + ii];
-          if (m !== steelIdx) { f = m; break; }
+  rects.forEach((q) => { if (!(standoff && q.m === steelIdx)) addBox(pal[q.m], q, 0, LX, true); });
+  if (shelf) {
+    const steelRects = rects.filter((q) => q.m === steelIdx);
+    if (standoff) {
+      // the insulation (or air) that each bracket cell replaces: the nearest neighbour that is not steel
+      const nbr = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+      const filler = new Int16Array(nx * ny).fill(-1);
+      steelRects.forEach((q) => {
+        for (let j = q.j0; j < q.j1; j++) for (let i = q.i0; i < q.i1; i++) {
+          let f = -1;
+          for (const [di, dj] of nbr) {
+            const ii = i + di; const jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;
+            const m = r.mats[jj * nx + ii];
+            if (m !== steelIdx) { f = m; break; }
+          }
+          filler[j * nx + i] = f >= 0 ? f : idxOf('minwool');
         }
-        filler[j * nx + i] = f >= 0 ? f : idxOf('minwool');
-      }
-    });
-    mergeRects(filler, nx, ny).filter((q) => q.m >= 0).forEach((q) => {
-      BRACKET_GAPS.forEach(([x0, x1]) => mesher.box(pal[q.m].look, [x0, q.i0 * c, q.j0 * c], [x1, q.i1 * c, q.j1 * c]));
-    });
-    bracketRects.forEach((q) => {
-      BRACKETS.forEach(([x0, x1], n) => {
-        mesher.box(pal[q.m].look, [x0, q.i0 * c, q.j0 * c], [x1, q.i1 * c, q.j1 * c], n === 0 ? { cut: { face: cutFace, look: pal[q.m].cut } } : {});
       });
-    });
+      mergeRects(filler, nx, ny).filter((q) => q.m >= 0).forEach((q) => BRACKET_GAPS.forEach(([x0, x1]) => addBox(pal[q.m], q, x0, x1, false)));
+      steelRects.forEach((q) => BRACKETS.forEach(([x0, x1], n) => addBox(pal[q.m], q, x0, x1, n === 0)));
+    }
+    const runs = standoff ? BRACKETS : [[0, LX]];
+    steelRects.forEach((q) => runs.forEach(([x0, x1]) => mesher.box('__xray', [x0, q.i0 * c, q.j0 * c], [x1, q.i1 * c, q.j1 * c])));
   }
 
   // ---- context (not solved): room-side floor slab, floor, ceiling, balcony stub

@@ -254,7 +254,7 @@ const EXACT = {
   'Sill pan': 'Tray under the window',
   'No weep holes': 'No drain holes',
   'Base flashing': 'Metal strip at the bottom',
-  'Air cavity': 'Drain gap',
+  'Air cavity': 'Air gap',
   'No head flashing': 'No metal strip',
   'No gap: brick touches the wrap': 'No gap: brick touches the sheet',
   'Leak': 'Leak',
@@ -314,7 +314,7 @@ const PATTERNS = [
   [/^Head flashing, .*$/, 'Metal strip over the window'],
   [/^Weep holes, .*$/, 'Small drain holes'],
   [/^Solid masonry, .*$/, 'Solid masonry'],
-  [/^Air cavity, .*$/, 'Drain gap'],
+  [/^Air cavity, .*$/, 'Air gap'],
 ];
 
 /** Plain version of a 3D label for levels 1 to 3. Unknown text is returned unchanged. No digits in the result. */

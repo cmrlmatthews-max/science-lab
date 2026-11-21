@@ -97,6 +97,9 @@ function plainMaterial(id) {
   if (id === '__break') {
     return new THREE.MeshStandardMaterial({ color: '#22a592', roughness: 0.62, metalness: 0.05 });
   }
+  if (id === '__xray') {
+    return new THREE.MeshStandardMaterial({ color: '#3d4852', roughness: 0.4, metalness: 0.3, transparent: true, opacity: 0.88, depthTest: false, depthWrite: false });
+  }
   if (id === '__stainless') {
     return new THREE.MeshStandardMaterial({ color: '#c9ced4', roughness: 0.3, metalness: 0.95 });
   }

@@ -210,7 +210,7 @@ export default {
       sw.appendChild(bt);
       return bt;
     });
-    stageEl.append(inset, sw);
+    stageEl.append(layers.gate(inset, 4, 5), sw);
     cleanup.push(() => { inset.remove(); sw.remove(); });
     function paintSwitch() { swBtns.forEach((bt) => bt.setAttribute('aria-pressed', bt.dataset.v === b.side ? 'true' : 'false')); }
     paintSwitch();
@@ -278,7 +278,6 @@ export default {
     }, el('span', { class: 't', text: L3.pairs[p.id] })));
     const plainPairSec = section(L3.controls.fix, el('div', { class: 'bt-cards', role: 'group', 'aria-label': L3.controls.fix }, plainPairBtns));
     const viewSeg = segmented({
-      label: L3.controls.view,
       options: ['both', 'problem', 'better'].map((v) => ({ value: v, label: L3.views[v] })),
       value: 'both',
       onChange: (v) => { view = v; applyNarrow(); },
@@ -571,6 +570,9 @@ export default {
       paintResults();
       scene3d.setPlain(lv <= 2);
       applyNarrow();
+      // the stage changes size when a panel appears or goes away: frame the models again once the layout has settled
+      const t = setTimeout(() => scene3d.frame(), 150);
+      cleanup.push(() => clearTimeout(t));
     });
   },
 

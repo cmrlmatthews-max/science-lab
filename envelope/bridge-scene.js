@@ -228,6 +228,7 @@ export function createBridgeScene(stage, stageEl) {
       const m = new THREE.Mesh(geometry, bank.material(id));
       m.castShadow = id !== 'airspace';
       m.receiveShadow = id !== 'airspace';
+      if (id === '__xray') { m.castShadow = false; m.receiveShadow = false; m.renderOrder = 3; }
       m.raycast = () => {};
       group.add(m);
     });
@@ -811,7 +812,9 @@ export function createBridgeScene(stage, stageEl) {
         const mid = (lo + hi) / 2;
         if (tryPad(mid).over <= 0.002) hi = mid; else lo = mid;
       }
-      return tryPad(hi);
+      const fin = tryPad(hi);
+      st.fit = { pad: hi, over: fin.over, x0: fin.x0, x1: fin.x1, y0: fin.y0, y1: fin.y1, w: fin.rect.width, h: fin.rect.height };
+      return fin;
     };
     for (let round = 0; round < 2; round++) {
       const r = solve();
@@ -946,6 +949,7 @@ export function createBridgeScene(stage, stageEl) {
       stage.requestRender();
     },
     /** Client rectangles of everything drawn over the models (for layout checks): [{ kind, text, left, top, right, bottom }]. */
+    get fit() { return st.fit; },
     labelRects() {
       const out = [];
       visibleSides().forEach((k) => {
