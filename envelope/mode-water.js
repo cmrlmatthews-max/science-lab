@@ -322,12 +322,12 @@ export default {
     cleanup.push(offTap);
 
     // ---------- camera: only when asked ----------
-    function zoomTo(errId) {
+    function zoomTo(errId, k = 1) {
       const h = lastRes && lastRes.hot && lastRes.hot[errId];
       if (!h) return;
       const c = new T.Vector3(...h.c);
       const d = new T.Vector3(...h.dir).normalize();
-      fx.flyTo(c.clone().addScaledVector(d, h.dist), c, 0.7);
+      fx.flyTo(c.clone().addScaledVector(d, h.dist * k), c, 0.7);
       relayout();
     }
     function attention(errId) {
@@ -639,7 +639,7 @@ export default {
       run: () => {
         if (S().errors.length || S().view !== 'errors') setErrors([]); else { build(); }
         frameView();
-        if (HOT[i]) zoomTo(HOT[i]);
+        if (HOT[i]) attention(HOT[i]);
       },
     })), { title: 'The story' });
     function go(patch) {

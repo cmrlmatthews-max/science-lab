@@ -409,7 +409,7 @@ export function buildWalls(env) {
     light: { dir: [-0.5, 0.75, 0.8], floorY: -0.05 },
     // on a phone the markers sit above the wall, clear of it, and not on its base
     markers: narrow
-      ? [{ text: 'Outside · rain', pos: [sz * 0.8, sz + STEP * (n - 1) + 9, 12], tone: 'cold' }, { text: 'Inside · dry', pos: [sz * 0.2, sz + STEP * (n - 1) + 9, 0], tone: 'warm' }]
+      ? [{ text: 'Outside · rain', pos: [sz * 0.05, sz + STEP * (n - 1) + 12, 16], tone: 'cold' }, { text: 'Inside · dry', pos: [sz * 0.95, sz + STEP * (n - 1) + 12, -6], tone: 'warm' }]
       : [{ text: 'Outside · rain', pos: [sz / 2, 0.5, 22], tone: 'cold' }, { text: 'Inside · dry', pos: [sz / 2, 0.5, -5], tone: 'warm' }],
     rainBox: rb,
   };
