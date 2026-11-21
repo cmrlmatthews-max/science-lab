@@ -230,8 +230,8 @@ export default {
 
     panelA.append(
       question(TEXT.l1.question, TEXT.l1.sub),
+      layers.gate(ansA.el, 1, 2),   // the answer comes first so that it shows on a phone without scrolling
       layers.gate(choices, 1, 1),
-      layers.gate(ansA.el, 1, 2),
       layers.gate(hint, 1, 2),
       layers.gate(moreBox, 1, 2),
       layers.gate(tellStory.el, 2, 2),

@@ -1,9 +1,13 @@
 // envelope/main.js  store, mode switching and panel tabs for Envelope Lab.
 // Each mode default-exports { id, label, panelTitles, mount(ctx), unmount() }.
-// ctx = { stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow() }
+// ctx = { stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow(),
+//         layers (shared/layers.js controller), setPanelMin(panel, min) }  (no ctx.card: modes use envelope/info-card.js)
+// The store holds `level` (1–5, always 1 on page load). The layer bar is always on screen.
 
 import { createStage } from '../shared/scene.js';
 import { tabs } from '../shared/ui.js';
+import { createLayers, mountBar } from '../shared/layers.js';
+import { setCardLayers } from './info-card.js';
 import { cloneWall } from './walls.js';
 import assembly from './mode-assembly.js';
 import bridge from './mode-bridge.js';
@@ -34,6 +38,7 @@ export function createStore(initialState) {
 
 export const store = createStore({
   mode: 'assembly',
+  level: 1,                              // information layer 1–5 (not saved; every visit starts at 1)
   climate: { tIn: 70, rhIn: 35, tOut: 20, rhOut: 70 },
   climatePreset: 'mixed',
   wallId: 'W1',
@@ -54,6 +59,10 @@ const panelC = document.getElementById('panel-c');
 const summaryEl = document.getElementById('summary');
 const titleEls = { a: document.getElementById('title-a'), b: document.getElementById('title-b'), c: document.getElementById('title-c') };
 const wraps = Array.from(document.querySelectorAll('.panel-wrap'));
+const appEl = document.querySelector('.app');
+const shellEl = document.querySelector('.shell');
+const headerEl = document.querySelector('.app-header');
+document.body.classList.add('sl-layers');
 
 let current = null;
 let stage = null;
@@ -79,6 +88,33 @@ const panelTabs = tabs({
 });
 document.getElementById('sheet').prepend(panelTabs.el);
 panelTabs.el.classList.add('sheet-tabs');
+
+// ----- information layers: bar, hidden panels -----
+const layers = createLayers({ get: () => store.get().level, set: (n) => store.set({ level: n }) });
+store.subscribe(() => layers.sync());
+mountBar(layers, { header: headerEl, shell: shellEl, summary: summaryEl });
+setCardLayers(layers);
+const panelMin = { b: 1, c: 1 };
+
+function applyPanels() {
+  const lv = layers.level();
+  appEl.dataset.level = String(lv);
+  for (const p of ['b', 'c']) {
+    const off = lv < panelMin[p];
+    wraps.forEach((w) => { if (w.dataset.panel === p) w.hidden = off; });
+    const tabBtn = panelTabs.el.querySelector(`[data-value="${p}"]`);
+    if (tabBtn) tabBtn.hidden = off;
+    shellEl.classList.toggle(`sl-no-${p}`, off);
+    if (off && activePanel === p) showPanel('a');
+  }
+}
+/** Hide panel 'b' or 'c' (and its phone tab) below level `min`; the 3D view uses the space on wide screens. */
+function setPanelMin(panel, min) {
+  if (panel !== 'b' && panel !== 'c') return;
+  panelMin[panel] = Math.max(1, Math.min(5, Math.round(min) || 1));
+  applyPanels();
+}
+layers.watch(() => applyPanels());
 
 function showPanel(which) {
   activePanel = which;
@@ -108,6 +144,8 @@ function switchMode(id) {
   if (current) {
     try { current.unmount(); } catch (e) { console.error(e); }
   }
+  layers.reset();          // forget the old mode's gates and listeners
+  panelMin.b = 1; panelMin.c = 1;
   if (stage) { stage.dispose(); stage = null; }
   clearPanels();
   current = mode;
@@ -120,9 +158,10 @@ function switchMode(id) {
   panelTabs.setLabels([{ value: 'a', label: t.a }, { value: 'b', label: t.b }, { value: 'c', label: t.c }]);
   document.title = `${mode.label} · Envelope Lab`;
   showPanel('a');
+  applyPanels();
   stage = createStage(stageEl);
   try {
-    mode.mount({ stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow: () => narrowMq.matches });
+    mode.mount({ stageEl, panelA, panelB, panelC, summaryEl, store, stage, isNarrow: () => narrowMq.matches, layers, setPanelMin });
   } catch (e) {
     showError(e);
   }

@@ -174,6 +174,7 @@ export const TEXT = {
   },
 
   l4: {
+    heightsNote: 'Heights are not to scale',
     tiles: {
       lowest: { label: 'Lowest point', compare: compareHeight },
       highest: { label: 'Highest point', compare: compareHeight },
@@ -191,6 +192,7 @@ export const TEXT = {
   },
 
   l5: {
+    liftNote: 'The picture pushes low orbits outward from the surface so that they read. The numbers are true.',
     world: 'World',
     kepler: "Kepler's ideas",
     extraTry: { label: 'See the equal slices', hint: 'Each slice takes the same time.' },

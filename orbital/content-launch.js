@@ -134,6 +134,7 @@ export const TEXT = {
   },
 
   l4: {
+    heightsNote: 'Heights are not to scale',
     tiles: {
       speed: {
         label: 'Your speed',
@@ -183,6 +184,7 @@ export const TEXT = {
   },
 
   l5: {
+    liftNote: 'The picture pushes low orbits outward from the surface so that they read. The numbers are true.',
     sections: { numbers: 'Numbers', why: 'Why', right: 'Right now', quick: 'Quick settings', formulas: 'Formulas', bodies: 'Other worlds' },
     world: 'World',
     height: 'Start height above the surface',

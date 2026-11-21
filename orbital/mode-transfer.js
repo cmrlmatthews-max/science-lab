@@ -282,6 +282,14 @@ export default {
 
     const note3d = el('div', { class: 'tf-3d-note', text: '' });
     stageEl.appendChild(note3d);
+    // "Heights are not to scale": levels 4 and 5 only. Sits above the body note when both show.
+    const liftNote3d = el('div', { class: 'tf-3d-note', text: TEXT.l4.heightsNote });
+    liftNote3d.style.display = 'none';
+    stageEl.appendChild(liftNote3d);
+    function paintLift() {
+      liftNote3d.style.display = layers.level() >= 4 ? '' : 'none';
+      liftNote3d.style.bottom = note3d.textContent ? '26px' : '8px';
+    }
 
     function rebuildBody() {
       if (bodyObj) bodyObj.dispose();
@@ -362,6 +370,7 @@ export default {
       ek = Math.max(0, drawnR + GAP - g.r1 / k) * k;
       if (!bodyObj || lastBodyId !== body.id) rebuildBody(); else bodyObj.setScale(k);
       note3d.textContent = bodyObj.exaggerated ? `${body.name} ${TEXT.l1.labels.notToScale}` : '';
+      paintLift();
 
       startPath.setPoints(dispAll(samplePath(g.mu, elementsFromApsides(g.mu, g.r1, g.r1), 200)), k);
       const tgt = dispAll(samplePath(g.mu, elementsFromApsides(g.mu, g.r2, g.r2), 200));
@@ -716,6 +725,7 @@ export default {
       section(T5.labels.plan, stats(tBurn1.el, tBurn2.el, tTotal.el, tCoast.el, tFuel.el, tV1.el, tV2.el)),
       section(T5.labels.fuelNumbers, keyEl),
       notesEl,
+      el('p', { class: 'tf-note', text: T5.liftNote }),
       section(T5.labels.formulasTitle, formulasEl),
       windowSource,
       el('div', { class: 'row' }, sourceTag(FUEL_SOURCE)),
@@ -967,6 +977,7 @@ export default {
 
     // a level change: new words, new marker labels, and the right scene for the new layer
     layers.onChange((lv, prev) => {
+      paintLift();
       if (marker1) marker1.setLabel(pushLabel(1));
       if (marker2) marker2.setLabel(pushLabel(2));
       if (lv === 1 && prev > 1) {
@@ -1165,6 +1176,7 @@ export default {
       if (bodyObj) bodyObj.dispose();
       stars.dispose();
       note3d.remove();
+      liftNote3d.remove();
       stage.scene.remove(world);
       dbg = { burn1: null, burn2: null, get: null };
     });

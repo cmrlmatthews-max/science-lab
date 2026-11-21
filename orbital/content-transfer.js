@@ -144,6 +144,7 @@ export const TEXT = {
   },
 
   l4: {
+    heightsNote: 'Heights are not to scale',
     tiles: {
       push1: { label: 'First push', compare: (v) => speedLike(v / 0.9, 'a rifle bullet') },
       push2: { label: 'Second push', compare: (v) => speedLike(v / 0.343, 'sound') },
@@ -164,6 +165,7 @@ export const TEXT = {
   },
 
   l5: {
+    liftNote: 'The picture pushes low orbits outward from the surface so that they read. The numbers are true.',
     labels: {
       where: 'Where the craft is',
       plan: 'The plan',

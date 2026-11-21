@@ -75,6 +75,23 @@ const CONTROL = {
 const KIND = { layer: 'Layer', concept: 'Idea', part: 'Part' };
 
 let active = null; // the card created last; chips and buttons use it
+let cardLayers = null; // layers controller from the shell (null: card behaves as before)
+let unwatch = null;
+
+/**
+ * The shell passes the layers controller once (or null). At levels 1-3 a pinned card is reduced
+ * and has a "Tell me more" button; level 4 and up is the full card. Without layers nothing changes.
+ */
+export function setCardLayers(layers) {
+  if (unwatch) { unwatch(); unwatch = null; }
+  cardLayers = layers || null;
+  if (cardLayers && typeof cardLayers.watch === 'function') {
+    unwatch = cardLayers.watch(() => { if (active && active.rerender) active.rerender(); });
+  }
+}
+function cardLevel() {
+  try { return cardLayers ? cardLayers.level() : 5; } catch (e) { return 5; }
+}
 
 function h(tag, cls, text) {
   const n = document.createElement(tag);
@@ -204,6 +221,29 @@ export function createInfoCard(hostEl) {
       return;
     }
 
+    const reduced = cardLevel() <= 3;
+    if (reduced) {
+      if (info.job) root.append(sec(jobHeading, ...paras(info.job)));
+      if (info.ifWrong) root.append(sec('If it goes wrong', ...paras(info.ifWrong)));
+      if (info.doThis) root.append(sec('What to do', ...paras(info.doThis)));
+      const relR = (info.related || []).filter((r) => r !== id && getInfo(r));
+      if (relR.length) {
+        const box = h('div', 'ic-rel');
+        relR.forEach((r) => {
+          const c = h('button', 'ic-chip');
+          c.type = 'button';
+          c.append(h('span', null, getInfo(r).title));
+          c.addEventListener('click', () => swap(r, false));
+          box.append(c);
+        });
+        root.append(sec('Related', box));
+      }
+      const tm = h('button', 'ic-more-btn ic-tellmore', 'Tell me more');
+      tm.type = 'button';
+      tm.addEventListener('click', () => { if (cardLayers) cardLayers.setLevel(cardLayers.level() + 1); });
+      root.append(tm);
+      return;
+    }
     if (info.what) root.append(sec('What it is', ...paras(info.what)));
     if (info.job) root.append(sec(jobHeading, ...paras(info.job)));
     if (info.ifWrong) root.append(sec('If it goes wrong', ...paras(info.ifWrong)));
@@ -400,6 +440,7 @@ export function createInfoCard(hostEl) {
     show,
     hide,
     hideHover,
+    rerender() { if (root.hidden || !id) return; const sc = root.scrollTop; render(); root.scrollTop = sc; place(); },
     isOpen: () => !root.hidden,
     isPinned: () => !root.hidden && pinned,
     currentId: () => (root.hidden ? null : id),

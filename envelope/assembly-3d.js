@@ -255,6 +255,18 @@ function layerNames(L) {
   const nm = (MATERIALS[L.materialId]?.name || L.materialId).split(',')[0];
   return [nm, nm];
 }
+// Plain names for the first two information layers: no digits, everyday words.
+const PLAIN = {
+  gyp_050: 'Drywall', gyp_063: 'Drywall', gyp_sheath: 'Outer board', osb: 'Wood sheathing', plywood: 'Wood sheathing',
+  wrb: 'Rain barrier sheet', minwool: 'Insulation board', xps: 'Foam board', eps: 'Foam board', polyiso: 'Foam board',
+  ccspf: 'Spray foam', airspace: 'Air gap', brick: 'Brick', cmu8: 'Concrete block', concrete: 'Concrete',
+  fibercement: 'Siding', vinyl: 'Siding', stucco: 'Stucco', aluminum: 'Aluminum',
+};
+function plainName(L) {
+  if (isFramedLayerName(L)) return 'Insulation';
+  return PLAIN[L.materialId] || (MATERIALS[L.materialId]?.name || L.materialId).split(',')[0].replace(/\s*R-?\d+/g, '').replace(/[0-9"/-]+/g, '').trim();
+}
+function isFramedLayerName(L) { return /^batt_/.test(L.materialId); }
 function studNames(f) {
   if (f.type === 'steel') return [`Steel stud ${f.depth} in`, 'Steel stud', `${f.spacing} in o.c.`];
   const nom = f.depth === 3.5 ? '2x4' : f.depth === 5.5 ? '2x6' : f.depth === 7.25 ? '2x8' : `${f.depth} in`;
@@ -325,6 +337,7 @@ export function createWall3D(stage) {
   let hov = null;
   let section = false;
   let showCallouts = true;
+  let plain = false; // plain labels: names only, no digits (information levels 1 and 2)
   let onSelect = null;
   let onHover = null;
   let stopPulse = null;
@@ -841,7 +854,7 @@ export function createWall3D(stage) {
       }
       const c = createCallout(stage, { text: names[0], id, parent: root, layerIndex: spc.li, side: 'right', fontPx: nar ? 11.5 : 12.5 });
       c.userData.kind = spc.kind === 'stud' ? 'stud' : 'layer';
-      layerCallouts.push({ c, kind: c.userData.kind, li: spc.li, ax, ay, az: e.z1 + (isFramedLayer(L) ? 0.4 : 0.05), long: names[0], short: names[1], sub: names[2] || null });
+      layerCallouts.push({ c, kind: c.userData.kind, li: spc.li, ax, ay, az: e.z1 + (isFramedLayer(L) ? 0.4 : 0.05), long: names[0], short: names[1], sub: names[2] || null, plain: spc.kind === 'stud' && framing && framing.li === spc.li ? (L.framing.type === 'steel' ? 'Steel stud' : 'Wood stud') : plainName(L) });
     });
     // ground contact shadow follows the footprint
     blob.scale.set(D.W + 30, totalDepth + 36, 1);
@@ -860,6 +873,7 @@ export function createWall3D(stage) {
   function calloutText(o) {
     const nar = isNarrow();
     const an = cur.an;
+    if (plain) return o.plain;
     const name = nar ? o.short : o.long;
     let sub = null;
     if (show === 'temp' && !nar && o.kind === 'layer' && an && an.layers[o.li]) {
@@ -914,7 +928,7 @@ export function createWall3D(stage) {
       const dewAtRight = isNarrow();
       dewCallout.setAnchor(new THREE.Vector3(dewAtRight ? e.x1 + ext - 0.6 : (section ? sectionX + 0.07 : e.x0 - 0.07), dewAtRight ? e.h + 0.3 : hRib, zD + k * gp));
       dewCallout.userData.layerIndex = k;
-      const dt = `Dew point ${fmt0(an.dewPointF)} °F\n${second}`;
+      const dt = plain ? `Water can form past here\n${second}` : `Dew point ${fmt0(an.dewPointF)} °F\n${second}`;
       if (dt !== dewCallout.text) dewCallout.setText(dt);
       dewCallout.setVisible(showCallouts);
     } else {
@@ -947,7 +961,7 @@ export function createWall3D(stage) {
           d.position.set((d.userData.u - 0.5) * 0.86, (d.userData.v - 0.5) * 0.86, 0.1);
           d.scale.set(r / 0.34 / pw, (r * 1.25) / 0.34 / ph, (r * 0.6) / 0.34);
         });
-        const tempText = `${isNarrow() ? 'Water forms' : 'Water forms here'}: ${fmt0(c.tempF)} °F`;
+        const tempText = plain ? 'Water forms here' : `${isNarrow() ? 'Water forms' : 'Water forms here'}: ${fmt0(c.tempF)} °F`;
         condCallout.setAnchor(new THREE.Vector3(cx, cy + ph * 0.2, zf + 0.3 + target * gp));
         condCallout.userData.layerIndex = target;
         if (tempText !== condCallout.text) condCallout.setText(tempText);
@@ -958,14 +972,19 @@ export function createWall3D(stage) {
     const tIn = climate ? climate.tIn : 70; const tOut = climate ? climate.tOut : 20;
     const warmIn = tIn >= tOut;
     // The camera looks from the exterior, so say where each side is.
-    inMarker.setText(isNarrow() ? `Inside · ${fmt0(tIn)} °F` : `Inside, behind the wall · ${fmt0(tIn)} °F`); inMarker.setTone(warmIn ? 'warm' : 'cold');
-    outMarker.setText(isNarrow() ? `Outside · ${fmt0(tOut)} °F` : `Outside, where you stand · ${fmt0(tOut)} °F`); outMarker.setTone(warmIn ? 'cold' : 'warm');
+    if (plain) {
+      inMarker.setText(warmIn ? 'Inside, warm' : 'Inside, cool'); inMarker.setTone(warmIn ? 'warm' : 'cold');
+      outMarker.setText(warmIn ? 'Outside, cold' : 'Outside, hot'); outMarker.setTone(warmIn ? 'cold' : 'warm');
+    } else {
+      inMarker.setText(isNarrow() ? `Inside · ${fmt0(tIn)} °F` : `Inside, behind the wall · ${fmt0(tIn)} °F`); inMarker.setTone(warmIn ? 'warm' : 'cold');
+      outMarker.setText(isNarrow() ? `Outside · ${fmt0(tOut)} °F` : `Outside, where you stand · ${fmt0(tOut)} °F`); outMarker.setTone(warmIn ? 'cold' : 'warm');
+    }
     const zFront = totalDepth + (n - 1) * gp;
     const nar = isNarrow();
     [inMarker, outMarker, scaleMarker].forEach((m) => m.setFont(nar ? 12 : 13.5));
     inMarker.setPosition(nar ? new THREE.Vector3(D.X0 - 0.5, D.H + 6, -0.5) : new THREE.Vector3(D.X0 - 2.5, D.H * 0.46, -0.5));
     outMarker.setPosition(new THREE.Vector3(D.X0 - 2, -3.4, zFront + 4));
-    scaleGroup.visible = !nar; scaleMarker.setVisible(!nar);
+    scaleGroup.visible = !nar && !plain; scaleMarker.setVisible(!nar && !plain);
     scaleGroup.position.set(D.X0 + 24, 0, zFront + 14);
     scaleMarker.setPosition(new THREE.Vector3(D.X0 + 24 + 14, 0.5, zFront + 14));
     scaleMat.color.set(stage.theme.ink);
@@ -1382,6 +1401,20 @@ export function createWall3D(stage) {
     onSelect(fn) { onSelect = fn; },
     onHover(fn) { onHover = fn; },
     setCallouts(on) { showCallouts = !!on; layout(); },
+    /** Plain labels (information levels 1 and 2): names only, no digits, "Inside, warm" and "Outside, cold". Default off. */
+    setPlainLabels(on) {
+      const v = !!on;
+      if (v === plain) return;
+      plain = v;
+      if (cur.an) { layout(); placeLabelsNow(); }
+    },
+    /** Client rectangle of the wall itself (without its labels): { left, right, top, bottom }, or null before the first update. */
+    wallRect() {
+      if (!canvasEl || !cur.an || !extents.length) return null;
+      const r = canvasRect();
+      const L = silhouette();
+      return { left: r.left + L.L, right: r.left + L.R, top: r.top + L.T, bottom: r.top + L.B };
+    },
     setHoverLayer(i) { hov = i == null ? null : i; applyEmphasis(); },
     resetView() { fitView(); },
     _debug: { screenPoint, get callouts() { return allCallouts(); }, get dims() { return D; }, relayout: placeLabelsNow },

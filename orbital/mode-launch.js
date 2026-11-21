@@ -294,8 +294,20 @@ export default {
       liveSimple.style.display = on ? 'none' : '';
     };
     const note = el('div', { class: 'launch-note' });
-    stageEl.append(overlay, note);
-    cleanup.push(() => { overlay.remove(); note.remove(); });
+    const liftNote = el('div', { class: 'launch-note', text: T.l4.heightsNote });
+    liftNote.style.display = 'none';
+    stageEl.append(overlay, note, liftNote);
+    cleanup.push(() => { overlay.remove(); note.remove(); liftNote.remove(); });
+    // "Heights are not to scale": levels 4 and 5 only, and only where the picture lifts the orbits (not around the Sun).
+    // It sits above the "not to scale" body note when both show.
+    let liftOn = false;
+    const liftP = el('p', { text: T.l5.liftNote });
+    function paintLift() {
+      const on = lv() >= 4 && liftOn;
+      liftNote.style.display = on ? '' : 'none';
+      liftNote.style.bottom = note.textContent ? '24px' : '6px';
+      liftP.style.display = liftOn ? '' : 'none';
+    }
     const txt = { alt: '', spd: '', tim: '', plain: '' };
 
     const sAlt = stat({ label: 'Altitude', value: '—', unit: 'km' });
@@ -670,6 +682,7 @@ export default {
     let tileSig = '';
     let tiles = {};
     const whyBox = el('div', { class: 'launch-why' });
+    const whyLift = el('div', { class: 'launch-why' }, liftP);
     const formulaBox = el('div', { class: 'launch-stack', style: { gap: '8px' } });
     const formulaLive = {};
     for (const f of T.l5.formulas) {
@@ -699,7 +712,7 @@ export default {
       el('div', { class: 'launch-hint' }, T.l5.bodiesTitle, ' ', sourceTag(T.l5.source)));
     const deepBox = el('div', { class: 'launch-stack' },
       section(T.l5.sections.numbers, tilesBox),
-      section(T.l5.sections.why, whyBox),
+      section(T.l5.sections.why, el('div', { class: 'launch-stack', style: { gap: '8px' } }, whyBox, whyLift)),
       section(T.l5.sections.right, stats(sAlt.el, sSpd.el, sTim.el)),
       section(T.l5.sections.formulas, formulaBox),
       section(T.l5.sections.bodies, tableBox));
@@ -926,6 +939,7 @@ export default {
 
       // extent bucket (x1.5 steps): rescale and reframe only when the path no longer fits or got much smaller
       setOrbitLift(body.id === 'sun' ? 0 : body.radius);
+      liftOn = body.id !== 'sun';
       const idx = Math.ceil(Math.log(liftRadius(model.extent)) / Math.log(1.5) - 1e-9);
       let rescaled = false;
       if (kIdx === null || bodyChanged || idx > kIdx || idx <= kIdx - 2) { kIdx = idx; rescaled = true; }
@@ -973,6 +987,7 @@ export default {
       exagNote.textContent = msg;
       exagNote.style.display = msg ? '' : 'none';
       note.textContent = exag ? `${body.name} ${T.l1.notToScale}` : '';
+      paintLift();
 
       // Look almost straight down on the orbit plane: from a lower angle the body hides the far half of a low path.
       if (rescaled) frameSpace(stage, 100, { elevationDeg: 82, azimuthDeg: 0 });
@@ -1016,6 +1031,7 @@ export default {
     function repaintAll() {
       txt.alt = txt.spd = txt.tim = txt.plain = '';
       paintOverlayMode();
+      paintLift();
       syncControls();
       if (model) { paintResults(); paintLive(); }
       card.refresh();

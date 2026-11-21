@@ -364,6 +364,18 @@ export default {
     noteEl.style.display = 'none';
     stageEl.appendChild(noteEl);
     cleanup.push(() => noteEl.remove());
+    // "Heights are not to scale": levels 4 and 5 only, not around the Sun (no lift there). Sits above the body note.
+    const liftNoteEl = el('div', { class: 'orb-stage-note', text: TEXT.l4.heightsNote });
+    liftNoteEl.style.display = 'none';
+    stageEl.appendChild(liftNoteEl);
+    cleanup.push(() => liftNoteEl.remove());
+    const liftP = el('p', { class: 'orb-note', text: TEXT.l5.liftNote });
+    function paintLift() {
+      const lifted = body && body.id !== 'sun';
+      liftNoteEl.style.display = layers.level() >= 4 && lifted ? '' : 'none';
+      liftNoteEl.style.bottom = noteEl.style.display === 'none' ? '8px' : '24px';
+      liftP.style.display = lifted ? '' : 'none';
+    }
 
     const clock = createClock();
     const pathObj = createPath([[1, 0], [0, 1]], 1, { closed: true });
@@ -439,6 +451,7 @@ export default {
       bodyObj = createBody(body, k, { minRadiusUnits: body.id === 'sun' ? 3 : 0 });
       world.add(bodyObj.group);
       noteEl.style.display = bodyObj.exaggerated ? '' : 'none';
+      paintLift();
     }
 
     /** Recompute everything that depends on the orbit and redraw the 3D parts. */
@@ -453,7 +466,7 @@ export default {
       bucket = nb;
       k = Math.pow(BUCKET, nb);
       if (!forceFrame) clock.reset(frac * elements.period);
-      if (bodyObj) { bodyObj.setScale(k); noteEl.style.display = bodyObj.exaggerated ? '' : 'none'; }
+      if (bodyObj) { bodyObj.setScale(k); noteEl.style.display = bodyObj.exaggerated ? '' : 'none'; paintLift(); }
       pathObj.setPoints(samplePath(body.mu, elements, 240), k);
       pathKm = samplePath(body.mu, elements, 120);
       const eccentric = elements.e > 0.02;
@@ -602,8 +615,6 @@ export default {
       chip('kepler', TEXT.l5.kepler, 5));
 
     const ans = answer({ kind: 'info', title: '', text: '' });
-    // At level 2 the story step says the same thing in more words, so the answer waits until level 3.
-    layers.gateFn(() => { ans.el.hidden = layers.level() === 2; });
 
     panelA.append(el('div', { class: 'orb-stack' },
       question(TEXT.l1.question, TEXT.l1.sub),
@@ -661,7 +672,7 @@ export default {
     const note2 = el('p', { class: 'orb-note' });
     const note3 = el('p', { class: 'orb-note' });
     const formulaEls = TEXT.l5.formulas.map((f) => el('p', { class: 'orb-note orb-formula', text: f }));
-    const notes = el('div', {}, note1, note2, note3, ...formulaEls);
+    const notes = el('div', {}, note1, note2, note3, liftP, ...formulaEls);
 
     const tableEl = el('div', { class: 'orb-table', role: 'radiogroup', 'aria-label': 'Compare preset orbits' });
 
@@ -936,6 +947,7 @@ export default {
       if (lv < 5 && getBody().id !== 'earth') goPreset('earth', 'iss', false);
       else if (lv < 5 && getOrb().showAreas) setAreas(false);
       if (lv === 2 && prev !== 2) storyBox.go(0);
+      paintLift();
       renderPresetRows();
       if (elements) { paintResults(); update(0, true); }
       stage.requestRender();
