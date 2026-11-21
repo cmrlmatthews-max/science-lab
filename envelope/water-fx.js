@@ -29,6 +29,7 @@ export function createFx(gfx, stage, { reduce }) {
   let stains = []; // { mesh, ghost, t0 }
   let rings = []; // active attention rings
   let lineMats = [];
+  let edgeMats = [];
   let pulseRing = null;
   let flight = null;
 
@@ -233,6 +234,23 @@ export function createFx(gfx, stage, { reduce }) {
     return ln;
   }
 
+  /** A thick colored outline along the sharp edges of a mesh whose geometry is already in world coordinates (Layers view highlight). */
+  function addEdges(g, mesh, color, width = 3) {
+    const eg = new T.EdgesGeometry(mesh.geometry, 35);
+    const pos = eg.attributes.position.array;
+    if (!pos.length) { eg.dispose(); return null; }
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(Array.from(pos));
+    eg.dispose();
+    const mat = new LineMaterial({ color, linewidth: width, transparent: true, opacity: 1, depthTest: true, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    const ln = new LineSegments2(geo, mat);
+    ln.computeLineDistances();
+    ln.renderOrder = 7; ln.raycast = () => {};
+    g.add(ln);
+    edgeMats.push(mat);
+    return ln;
+  }
+
   // ---------------------------------------------------------------- drips
   /** A drop that forms at p and falls `fall` inches. */
   function addDrip(g, p, o = {}) {
@@ -402,9 +420,9 @@ export function createFx(gfx, stage, { reduce }) {
       stage.controls.target.lerpVectors(flight.t0, flight.t1, e);
       if (k >= 1) flight = null;
     }
-    if (lineMats.length && stage.renderer) {
+    if ((lineMats.length || edgeMats.length) && stage.renderer) {
       stage.renderer.getSize(_sz);
-      if (_sz.x !== lastW || _sz.y !== lastH) { lastW = _sz.x; lastH = _sz.y; lineMats.forEach((m) => m.resolution.set(_sz.x, _sz.y)); }
+      if (_sz.x !== lastW || _sz.y !== lastH) { lastW = _sz.x; lastH = _sz.y; lineMats.forEach((m) => m.resolution.set(_sz.x, _sz.y)); edgeMats.forEach((m) => m.resolution.set(_sz.x, _sz.y)); }
     }
   }
 
@@ -418,7 +436,8 @@ export function createFx(gfx, stage, { reduce }) {
 
   /** Forget everything made for the previous build (geometry is disposed with the group). */
   function reset() {
-    drops = []; drips = []; rains = []; arrows = []; stains = []; lineMats = [];
+    drops = []; drips = []; rains = []; arrows = []; stains = []; lineMats = []; edgeMats = [];
+    lastW = 0;
     if (flight) flight = null;
   }
   function dispose() {
@@ -429,7 +448,7 @@ export function createFx(gfx, stage, { reduce }) {
   }
 
   return {
-    addStream, addPool, addFilm, addStain, addWarnOutline, addDrip, addRain, addStaticArrows, addWindArrows,
+    addStream, addPool, addFilm, addStain, addWarnOutline, addEdges, addDrip, addRain, addStaticArrows, addWindArrows,
     pulse, flyTo, update, setRain, setWind, reset, recolor, dispose, state, colors: () => C,
   };
 }

@@ -49,6 +49,17 @@ export function lossWords(p) {
   return 'many times the heat';
 }
 
+/** How much of the extra loss a fix removes (0 to 1), in words. Levels 1 to 3 (no digits). */
+export function cutWords(c) {
+  if (c < 0.1) return null;
+  if (c < 0.28) return 'by about a fifth';
+  if (c < 0.42) return 'by about a third';
+  if (c < 0.58) return 'by about half';
+  if (c < 0.72) return 'by about two thirds';
+  if (c < 0.85) return 'by about three quarters';
+  return 'almost completely';
+}
+
 function compareLoss(p) {
   const ratio = 1 + p / 100;
   if (p < 3) return 'Almost no extra heat escapes.';

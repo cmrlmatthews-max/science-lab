@@ -8,6 +8,10 @@ import { solveBridge, describeResult, DETAILS } from './bridge.js';
 import { createBridgeScene } from './bridge-scene.js';
 import { graphSvg } from './bridge-graph.js';
 import { createInfoCard, infoChip, infoButton } from './info-card.js';
+import { story, tile, moreLink } from '../shared/layers.js';
+import { question, answer, tryThis } from '../shared/simple.js';
+import { dual } from '../shared/units.js';
+import { TEXT, PLAIN_NAME, lossWords, cutWords } from './content-bridge.js';
 
 const DETAIL_UI = {
   stud: {
@@ -98,7 +102,7 @@ const CSS = `
 .bt-key i.d{border-top:1.5px dashed var(--accent)}
 .bt-reset{position:absolute;top:10px;right:10px;z-index:3;min-height:var(--ctl);padding:0 12px;font-size:13px}
 .bt-overlay{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
-.bt-title{position:absolute;transform:translate(-50%,0);display:flex;align-items:center;gap:7px;max-width:min(46%,420px);padding:4px 10px;background:color-mix(in srgb,var(--paper-2) 94%,transparent);border:1px solid var(--line-strong);border-radius:16px;font:400 12.5px/1.25 var(--font-body);color:var(--ink);white-space:normal;text-align:left}
+.bt-title{position:absolute;transform:translate(-50%,0);width:max-content;display:flex;align-items:center;gap:7px;max-width:min(46%,420px);padding:4px 10px;background:color-mix(in srgb,var(--paper-2) 94%,transparent);border:1px solid var(--line-strong);border-radius:16px;font:400 12.5px/1.25 var(--font-body);color:var(--ink);white-space:normal;text-align:left}
 .bt-badge{font-weight:600;font-size:12px;flex:none}
 .bt-title[data-side="problem"] .bt-badge{color:var(--warn)}
 .bt-title[data-side="better"] .bt-badge{color:var(--ok)}
@@ -112,6 +116,15 @@ const CSS = `
 .bt-switch button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 [data-narrow="true"] .bt-inset{display:flex}
 [data-narrow="true"] .bt-switch{display:flex}
+.bt-choices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.bt-choice{display:flex;flex-direction:column;align-items:center;gap:6px;min-height:84px;padding:10px 6px;background:var(--paper-3);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius);font:500 14px/1.25 var(--font-body);text-align:center}
+.bt-choice svg{width:52px;height:36px;display:block}
+.bt-choice[aria-checked="true"]{border-color:var(--accent-edge);background:var(--accent-soft);box-shadow:inset 0 -3px 0 var(--accent)}
+.bt-stack{display:flex;flex-direction:column;gap:14px}
+.bt-plain-head{margin:0 0 2px;font:500 12px var(--font-body);color:var(--ink-2)}
+.bt-plain p{margin:0 0 8px;font-size:15px;line-height:1.45;color:var(--ink)}
+.bt-gloss{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px;font-size:12.5px;line-height:1.4;color:var(--ink-2)}
+.bt-gloss b{font-weight:500;color:var(--ink)}
 @media (max-width:899px){.bt-reset{min-height:36px;padding:0 10px}}
 `;
 
@@ -140,11 +153,12 @@ export default {
   _cleanup: [],
 
   mount(ctx) {
-    const { stage, stageEl, panelA, panelB, panelC, summaryEl, store } = ctx;
+    const { stage, stageEl, panelA, panelB, panelC, summaryEl, store, layers, setPanelMin } = ctx;
+    this._scene = null;
     const cleanup = this._cleanup = [];
 
     // ---------- state (kept in store.bridge so it survives a mode switch)
-    const defaults = { detailId: 'stud', studPair: 'ci', show: 'both', arrows: true, labels: true, side: 'problem' };
+    const defaults = { detailId: layers.level() <= 2 ? 'slab' : 'stud', studPair: 'ci', show: 'both', arrows: true, labels: true, side: 'problem' };
     const b = { ...defaults, ...(store.get().bridge || {}) };
     if (!DETAILS[b.detailId]) b.detailId = defaults.detailId;
     if (!PAIRS.stud.some((p) => p.id === b.studPair)) b.studPair = defaults.studPair;
@@ -177,6 +191,7 @@ export default {
     const card = createInfoCard(wrap);
     cleanup.push(() => card.dispose());
     const scene3d = createBridgeScene(stage, stageEl);
+    this._scene = scene3d;
     cleanup.push(() => scene3d.dispose());
     if (stage.onTheme) { const off = stage.onTheme(() => scene3d.onTheme()); cleanup.push(off); }
 
@@ -201,10 +216,13 @@ export default {
     paintSwitch();
 
     const mq = window.matchMedia('(max-width: 899px)');
+    let view = 'both';     // wide screens, levels 3 and 4: both models, or only one of them
     const applyNarrow = () => {
       stageEl.dataset.narrow = mq.matches ? 'true' : 'false';
-      scene3d.setSingle(mq.matches ? (b.side === 'better' ? 1 : 0) : null);
+      scene3d.setSingle(mq.matches ? (b.side === 'better' ? 1 : 0) : (view === 'problem' ? 0 : view === 'better' ? 1 : null));
+      if (viewWrap) viewWrap.style.display = mq.matches ? 'none' : '';
     };
+    let viewWrap = null;
     mq.addEventListener('change', applyNarrow);
     cleanup.push(() => mq.removeEventListener('change', applyNarrow));
 
@@ -237,12 +255,69 @@ export default {
     });
     const arrowTg = toggle({ label: 'Heat flow arrows', value: b.arrows, onChange: (v) => { b.arrows = v; save(); scene3d.setArrows(v); } });
     const labelTg = toggle({ label: 'Labels', value: b.labels, onChange: (v) => { b.labels = v; save(); scene3d.setLabels(v); } });
+    const introEl = el('p', { class: 'bt-intro' }, 'A thermal bridge is a shortcut for heat around the insulation. ', infoChip('thermal_bridge'));
+    const detailSec = section('Detail', cards);
+    const compareSec = section('Compare', pairHolder, pairNote);
+    const showSeg2 = showSeg.el;
+    layers.gate(showSeg2, 4, 5);
+    const showSec = section('Show', showSeg2, arrowTg.el, labelTg.el);
+    const learnSec = section('Learn more', el('div', { class: 'bt-chips' }, infoChip('continuous_insulation'), infoChip('thermal_break'), infoChip('framing_effect')));
+
+    // ----- layers: the question, the picture choices, the story, the plain controls
+    const L1 = TEXT.l1; const L3 = TEXT.l3;
+    const CHOICE_ICON = { stud: ICONS.stud, slab: ICONS.slab, shelf: ICONS.shelf };
+    const choiceBtns = L1.choices.map((c) => el('button', {
+      type: 'button', class: 'bt-choice', role: 'radio', 'aria-checked': 'false', 'data-choice': c.id,
+      on: { click: () => chooseDetail(c.id) },
+    }, el('span', { 'aria-hidden': 'true', html: CHOICE_ICON[c.id] }), el('span', { text: c.label })));
+    const choiceRow = el('div', { class: 'bt-choices', role: 'radiogroup', 'aria-label': L1.pick }, choiceBtns);
+    const ans = answer({ kind: 'info', title: '', text: '' });
+    const plainPairBtns = PAIRS.stud.map((p) => el('button', {
+      type: 'button', class: 'bt-dcard bt-pair', 'data-pair': p.id, 'aria-pressed': 'false',
+      on: { click: () => { if (b.studPair !== p.id) { b.studPair = p.id; save(); refreshAll(); } } },
+    }, el('span', { class: 't', text: L3.pairs[p.id] })));
+    const plainPairSec = section(L3.controls.fix, el('div', { class: 'bt-cards', role: 'group', 'aria-label': L3.controls.fix }, plainPairBtns));
+    const viewSeg = segmented({
+      label: L3.controls.view,
+      options: ['both', 'problem', 'better'].map((v) => ({ value: v, label: L3.views[v] })),
+      value: 'both',
+      onChange: (v) => { view = v; applyNarrow(); },
+    });
+    viewWrap = section(L3.controls.view, viewSeg.el);
+    function chooseDetail(id) { if (b.detailId !== id) { b.detailId = id; save(); refreshAll(); } }
+    const tries = [
+      { ...L3.tries[0], run: () => { chooseDetail('stud'); } },
+      { ...L3.tries[1], run: () => { chooseDetail('stud'); b.studPair = b.studPair === 'ci' ? 'wood' : 'ci'; save(); refreshAll(); } },
+      { ...L3.tries[2], run: () => { setView('problem'); } },
+      { ...L3.tries[3], run: () => { b.labels = false; labelTg.set(false); save(); scene3d.setLabels(false); } },
+    ];
+    const tryEl = tryThis(tries);
+    function setView(v) { view = v; viewSeg.set(v); b.side = v === 'better' ? 'better' : 'problem'; save(); paintSwitch(); applyNarrow(); }
+    const STORY = [
+      () => { chooseDetail('slab'); setView('both'); },
+      () => { chooseDetail('stud'); b.studPair = 'ci'; save(); refreshAll(); setView('problem'); },
+      () => { chooseDetail('slab'); setView('problem'); },
+      () => { chooseDetail('slab'); setView('both'); },
+      () => { chooseDetail('slab'); setView('both'); },
+    ];
+    const storyBox = story(TEXT.l2.steps.map((st, i) => ({ ...st, run: STORY[i] })), { title: 'The story' });
+    const plainIntro = el('p', { class: 'bt-intro', text: L3.plainIntro });
+    const notesEl = el('p', { class: 'bt-note', text: L3.notes.join(' ') });
+
     panelA.append(
-      el('p', { class: 'bt-intro' }, 'A thermal bridge is a shortcut for heat around the insulation. ', infoChip('thermal_bridge')),
-      section('Detail', cards),
-      section('Compare', pairHolder, pairNote),
-      section('Show', showSeg.el, arrowTg.el, labelTg.el),
-      section('Learn more', el('div', { class: 'bt-chips' }, infoChip('continuous_insulation'), infoChip('thermal_break'), infoChip('framing_effect'))),
+      layers.gate(el('div', { class: 'bt-stack' },
+        question(L1.question, L1.sub), choiceRow,
+        layers.gate(ans.el, 1, 2), layers.gate(storyBox.el, 2, 2), layers.gate(plainIntro, 3, 3),
+        layers.gate(el('div', {}, moreLink(layers)), 1, 2)), 1, 3),
+      layers.gate(introEl, 4, 5),
+      layers.gate(detailSec, 4, 5),
+      layers.gate(compareSec, 4, 5),
+      layers.gate(plainPairSec, 3, 3),
+      layers.gate(viewWrap, 3, 4),
+      layers.gate(showSec, 3, 5),
+      layers.gate(tryEl, 3, 4),
+      layers.gate(notesEl, 3, 3),
+      layers.gate(learnSec, 4, 5),
     );
     const comparesection = pairHolder.closest('.section');
 
@@ -270,15 +345,35 @@ export default {
     const todoEl = el('p', { class: 'bt-todo' });
     const moreBody = el('div');
     const more = el('details', { class: 'bt-more' }, el('summary', { text: 'More detail' }), moreBody);
+    // level 3: the result in plain words; level 4: six tiles and a few glossed words
+    const T4 = TEXT.l4.tiles;
+    const tLossP = tile({ label: T4.lossP.label, us: '', si: '', compare: '' });
+    const tLossB = tile({ label: T4.lossB.label, us: '', si: '', compare: '' });
+    const tColdP = tile({ label: T4.coldP.label, us: '', si: '', compare: '' });
+    const tColdB = tile({ label: T4.coldB.label, us: '', si: '', compare: '' });
+    const tRP = tile({ label: T4.rP.label, us: '', si: '', compare: '' });
+    const tRB = tile({ label: T4.rB.label, us: '', si: '', compare: '' });
+    const tilesWrap = el('div', { class: 'sl-tiles' }, tLossP.el, tLossB.el, tColdP.el, tColdB.el, tRP.el, tRB.el);
+    const glossEl = el('ul', { class: 'bt-gloss' }, Object.entries(TEXT.l4.glosses).map(([k, v]) => el('li', {}, el('b', { text: k }), ` ${v}`)));
+    const plainRes = el('div', { class: 'bt-plain' });
+    const plainTodo = el('p', { class: 'bt-todo' });
+    const bigBox = el('div', {}, bigEl, subEl, condEl);
+    const tableSec = section('Problem and better', tbl, dewEl);
+    const todoSec = section('What to do', todoEl);
     panelB.append(
-      el('div', {}, bigEl, subEl, condEl),
-      section('Problem and better', tbl, dewEl),
-      section('What to do', todoEl),
-      more,
-      el('p', { class: 'bt-note', text: '2D steady-state heat flow. Results are for study, not design.' }),
+      layers.gate(plainRes, 3, 3),
+      layers.gate(section('What to do', plainTodo), 3, 3),
+      layers.gate(bigBox, 4, 5),
+      layers.gate(el('div', { class: 'bt-stack' }, tilesWrap, el('p', { class: 'bt-note', text: TEXT.l4.note }), section(TEXT.l4.glossTitle, glossEl)), 4, 4),
+      layers.gate(tableSec, 5, 5),
+      layers.gate(todoSec, 4, 5),
+      layers.gate(more, 5, 5),
+      layers.gate(el('p', { class: 'bt-note', text: '2D steady-state heat flow. Results are for study, not design.' }), 5, 5),
     );
+    setPanelMin('b', 3);
 
-    // ---------- Panel C
+    // ---------- Panel C (level 4 and up)
+    setPanelMin('c', 4);
     const graphHolder = el('div');
     const keyHolder = el('div', { class: 'bt-key' });
     const barHolder = el('div');
@@ -296,11 +391,17 @@ export default {
       const pr = pairOf();
       Object.entries(detailBtns).forEach(([id, bt]) => bt.setAttribute('aria-pressed', id === b.detailId ? 'true' : 'false'));
       comparesection.style.display = b.detailId === 'stud' ? '' : 'none';
+      plainPairSec.style.display = b.detailId === 'stud' ? '' : 'none';
+      plainPairBtns.forEach((bt) => bt.setAttribute('aria-pressed', bt.dataset.pair === b.studPair ? 'true' : 'false'));
+      choiceBtns.forEach((bt) => bt.setAttribute('aria-checked', bt.dataset.choice === b.detailId ? 'true' : 'false'));
+      ans.update({ title: L1.answers[b.detailId].title, text: L1.answers[b.detailId].text });
       pairSeg.set(b.studPair);
       pairNote.textContent = '';
-      const names = [VAR_NAME[pr.problem], VAR_NAME[pr.better]];
+      const plainNames = layers.level() <= 3;
+      const names = plainNames ? [PLAIN_NAME[pr.problem], PLAIN_NAME[pr.better]] : [VAR_NAME[pr.problem], VAR_NAME[pr.better]];
       scene3d.setTitles(names);
       todoEl.textContent = DETAIL_UI[b.detailId].todo;
+      plainTodo.textContent = L3.todo[b.detailId];
     }
 
     function paintResults() {
@@ -339,11 +440,35 @@ export default {
       );
       // summary line (phone) and inset
       const sum = `${DETAIL_UI[b.detailId].sumName} · ${flow ? `${signed(rP.increasePct, 0)} % heat loss` : 'no flow'} · ${FIX_SUM[pr.better]}: ${flow ? `${signed(rB.increasePct, 0)} %` : 'no flow'}`;
-      summaryEl.textContent = sum;
+      const plain = layers.level() <= 3;
+      const choiceName = L1.choices.find((c) => c.id === b.detailId).label;
+      summaryEl.textContent = plain ? `${choiceName} · ${flow ? lossWords(rP.increasePct) : 'no heat flow'}` : sum;
       inset.replaceChildren(
-        el('span', { class: 'p' }, el('b', { text: 'Problem ' }), flow ? `${signed(rP.increasePct, 0)} %` : '—'),
-        el('span', { class: 'b' }, el('b', { text: 'Better ' }), flow ? `${signed(rB.increasePct, 0)} %` : '—'),
+        el('span', { class: 'p' }, el('b', { text: 'Problem ' }), flow ? (plain ? lossWords(rP.increasePct) : `${signed(rP.increasePct, 0)} %`) : '—'),
+        el('span', { class: 'b' }, el('b', { text: 'Better ' }), flow ? (plain ? lossWords(rB.increasePct) : `${signed(rB.increasePct, 0)} %`) : '—'),
       );
+      // level 3: the result in plain words
+      const R3 = L3.result;
+      const fixKey = { steel_ci: 'ci', wood: 'wood', break: 'break', standoff: 'standoff' }[pr.better];
+      const fixText = L3.fixes[fixKey][0].toUpperCase() + L3.fixes[fixKey].slice(1);
+      if (!flow) {
+        plainRes.replaceChildren(el('p', { text: R3.flat }), el('p', { class: 'bt-note', text: R3.flatHint }));
+      } else {
+        const cut = rP.increasePct > 3 ? (rP.increasePct - rB.increasePct) / rP.increasePct : 0;
+        const cw = cutWords(cut);
+        plainRes.replaceChildren(
+          el('p', { class: 'bt-plain-head', text: R3.problemHead }),
+          el('p', { text: `${L3.subjects[pr.problem]} lets out ${lossWords(rP.increasePct)}.` }),
+          el('p', { class: 'bt-plain-head', text: R3.betterHead }),
+          el('p', { text: cw ? `${fixText} cuts the extra heat loss ${cw}.` : `${fixText} changes little here.` }),
+          el('p', { text: rP.condensationRisk || rB.condensationRisk ? R3.wet : R3.dry }),
+        );
+      }
+      // level 4: tiles
+      const tf = (c) => dual.celsius(((c - 32) * 5) / 9, 1);
+      [[tLossP, rP, 'lossP'], [tLossB, rB, 'lossB']].forEach(([t, r, k]) => t.update({ us: flow ? `${signed(r.increasePct)} %` : '—', si: '', compare: flow ? T4[k].compare(r.increasePct) : 'No temperature difference.' }));
+      [[tColdP, rP, 'coldP'], [tColdB, rB, 'coldB']].forEach(([t, r, k]) => { const d = tf(r.minInteriorT); t.update({ us: d.us, si: d.si, compare: T4[k].compare(r.minInteriorT, r.dewPointF) }); });
+      [[tRP, rP, 'rP'], [tRB, rB, 'rB']].forEach(([t, r, k]) => t.update({ us: `R-${fmt(r.rEffective, 1)}`, si: `RSI ${fmt(r.rEffective * 0.1761, 2)}`, compare: T4[k].compare(r.rEffective) }));
     }
 
     function paintClimateViews() {
@@ -394,6 +519,7 @@ export default {
     const canvas = stage.renderer ? stage.renderer.domElement : null;
     const finePointer = () => { try { return window.matchMedia('(hover: hover) and (pointer: fine)').matches && window.innerWidth >= 900; } catch (e) { return false; } };
     const extrasFor = (hit) => {
+      if (!layers.is(3)) return undefined;
       const r = results[hit.side];
       const out = [{ label: 'Shown in', value: hit.side === 0 ? 'Problem version' : 'Better version' }];
       if (hit.tempF != null) out.push({ label: 'Temperature here', value: `${fmt(hit.tempF, 1)} °F` });
@@ -437,7 +563,15 @@ export default {
 
     scene3d.setShow(b.show);
     scene3d.setArrows(b.arrows);
+    scene3d.setPlain(layers.level() <= 2);
     refreshAll();
+    layers.onChange((lv) => {
+      if (lv >= 5 && view !== 'both') { view = 'both'; viewSeg.set('both'); }
+      paintStatic();
+      paintResults();
+      scene3d.setPlain(lv <= 2);
+      applyNarrow();
+    });
   },
 
   unmount() {

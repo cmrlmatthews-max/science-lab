@@ -14,6 +14,7 @@ import { createCallout, createSideMarker, pickCallout, worldToClient } from './l
 import { createLookBank } from './bridge-parts.js';
 import { buildModel, boundarySegments, PLAN_H, LX, S_IN, S_OUT } from './bridge-model.js';
 import { createArrows } from './bridge-flow.js';
+import { PLAIN_LABEL, PLAIN_MARKER, PLAIN_COLD } from './content-bridge.js';
 
 const EPS_FACE = 0.05;
 const EPS_LINE = 0.09;
@@ -84,6 +85,7 @@ export function createBridgeScene(stage, stageEl) {
     show: 'heat',
     arrows: true,
     labels: true,
+    plain: false,         // levels 1 and 2: plain names, no digits on the 3D labels
     single: null,         // null = both, 0 or 1 = only that side (phone)
     climate: null,
     results: [null, null],
@@ -397,7 +399,9 @@ export function createBridgeScene(stage, stageEl) {
   const fmtF = (t) => `${t.toFixed(1).replace('-', '−')} °F`;
   const rnd = (t) => `${Math.round(t)}`.replace('-', '−');
 
+  const labelText = (t) => (st.plain && PLAIN_LABEL[t] ? PLAIN_LABEL[t] : t);
   function coldText(r) {
+    if (st.plain) return r.condensationRisk ? PLAIN_COLD.wet : PLAIN_COLD.cold;
     return r.condensationRisk
       ? `Coldest inside surface: ${fmtF(r.minInteriorT)}\nBelow dew point: water forms`
       : `Coldest inside surface: ${fmtF(r.minInteriorT)}`;
@@ -437,7 +441,7 @@ export function createBridgeScene(stage, stageEl) {
     void zOf;
     specs.forEach((sp) => {
       const api = createCallout(stage, {
-        text: sp.text, id: sp.id, anchor: anchorFor(k, sp).add(off), offset: new THREE.Vector3(6, 4, 0), side: 'right', parent: root,
+        text: labelText(sp.text), id: sp.id, anchor: anchorFor(k, sp).add(off), offset: new THREE.Vector3(6, 4, 0), side: 'right', parent: root,
       });
       api.userData.place = sp.place || (model.plan ? 'side' : 'top');
       api.userData.order = sp.order;
@@ -463,8 +467,8 @@ export function createBridgeScene(stage, stageEl) {
     s.cold.setText(coldText(s.r));
     s.cold.setDotColor(s.r.condensationRisk ? '#c8261a' : '#1b44c8');
     s.cold.setAnchor(s.model.P(s.r.minInteriorAt + 0.5, 0, 0).add(s.group.position));
-    s.markers[0].setText(`Inside · ${rnd(st.climate.tIn)} °F`);
-    s.markers[1].setText(`Outside · ${rnd(st.climate.tOut)} °F`);
+    s.markers[0].setText(st.plain ? PLAIN_MARKER.inside : `Inside · ${rnd(st.climate.tIn)} °F`);
+    s.markers[1].setText(st.plain ? PLAIN_MARKER.outside : `Outside · ${rnd(st.climate.tOut)} °F`);
     s.markers[0].setTone(st.climate.tIn >= st.climate.tOut ? 'warm' : 'cold');
     s.markers[1].setTone(st.climate.tIn >= st.climate.tOut ? 'cold' : 'warm');
   }
@@ -508,7 +512,7 @@ export function createBridgeScene(stage, stageEl) {
       };
       bounds[k] = bb;
     });
-    const TIER = 25;
+    const TIER = 29;
     // plan details: ONE column of names (between the two models, or beside a single model), a leader from each pill to every model
     if (sides[vis[0]].model.plan) {
       const both = vis.length === 2;
@@ -531,6 +535,7 @@ export function createBridgeScene(stage, stageEl) {
           const ref = c.api.object.position;
           c.api.setSide('right');
           c.api.setOffset(pxToWorld(cx - it.w / 2, it.ty, ref).sub(ref));
+          c.api.userData.pl = { px: cx - it.w / 2, py: it.ty, side: 'right' };
           c.api.userData.secondary = n > 0;
         });
       });
@@ -544,6 +549,7 @@ export function createBridgeScene(stage, stageEl) {
       s.cold.setVisible(true);
       const setPx = (api, px, py, side) => {
         const ref = api.object.position;
+        api.userData.pl = { px, py, side };
         api.setSide(side);
         api.setOffset(pxToWorld(px, py, ref).sub(ref));
       };
@@ -551,6 +557,7 @@ export function createBridgeScene(stage, stageEl) {
         const ca = toPx(s.cold.object.position);
         const cw = s.cold.size.w;
         setPx(s.cold, ca.x - cw / 2, bb.y1 + 20, 'right');
+        s.cold.userData.pl = { px: ca.x - cw / 2, py: bb.y1 + 20, side: 'right' };
         const front = toPx(s.model.P(s.r.nx / 2, 0, 0).add(s.group.position));
         const back = toPx(s.model.P(s.r.nx / 2, s.r.ny, 0).add(s.group.position));
         s.markers[0].setPosition(pxToWorld(front.x, bb.y1 + 56, s.cold.object.position));
@@ -569,26 +576,46 @@ export function createBridgeScene(stage, stageEl) {
       });
       const topItems = own.filter((c) => c.api.userData.place === 'top' && !c.api.userData.secondary).map((c) => ({ api: c.api, a: toPx(c.api.object.position) }));
       topItems.push({ api: s.cold, a: toPx(s.cold.object.position) });
-      // pack right to left: an item takes the lowest row where it clears its neighbours, so leaders never cross a label
-      topItems.sort((u, v) => v.a.x - u.a.x);
-      const rows = [];
-      topItems.forEach((it) => {
-        const left = it.a.x - 4; const right = left + it.api.size.w;
-        let t = 0;
-        for (;; t++) {
-          const row = rows[t] || (rows[t] = []);
-          if (row.every((q) => right + 8 < q.left)) { row.push({ left, h: it.api.size.h }); break; }
+      // two staircases that rise toward the middle: names on the room side extend to the left of their leader,
+      // names on the outdoor side to the right. Half the rows of a single staircase, so the models can be larger.
+      topItems.sort((u, v) => u.a.x - v.a.x);
+      const n = topItems.length;
+      let split = n >= 2 && n < 5 ? Math.floor(n / 2) : 0;
+      if (n >= 5) {
+        let bestGap = -1;
+        for (let c = Math.floor(n / 2) - 1; c <= Math.ceil(n / 2) + 1; c++) {
+          if (c < 2 || c > n - 2) continue;
+          const g = topItems[c].a.x - topItems[c - 1].a.x;
+          if (g > bestGap) { bestGap = g; split = c; }
         }
-        it.row = t; it.left = left;
-      });
-      let base = bb.y0 - 8;
-      const rowY = rows.map((row) => {
-        const h = Math.max(24, ...row.map((q) => q.h));
-        const y = base - h / 2 - 2;
-        base -= h - 2;
-        return y;
-      });
-      topItems.forEach((it) => setPx(it.api, it.left, rowY[it.row], 'right'));
+      }
+      const groupL = topItems.slice(0, split);
+      const groupR = topItems.slice(split).reverse();
+      const packRows = (list, fits) => {
+        const rows = [];
+        list.forEach((it) => {
+          let t = 0;
+          for (;; t++) {
+            const row = rows[t] || (rows[t] = []);
+            if (row.every((q) => fits(it, q))) { row.push(it); break; }
+          }
+          it.row = t;
+        });
+        let base = bb.y0 - 8;
+        return rows.map((row) => {
+          const h = Math.max(24, ...row.map((q) => q.api.size.h));
+          const y = base - h / 2;
+          base -= h + 2;
+          return y;
+        });
+      };
+      groupL.forEach((it) => { it.right = it.a.x + 4; it.left = it.right - it.api.size.w; });
+      const leftEdge = groupL.length ? Math.max(...groupL.map((it) => it.right)) + 8 : -1e9;
+      groupR.forEach((it) => { it.left = Math.max(it.a.x - 4, leftEdge); it.right = it.left + it.api.size.w; });
+      const rowYL = packRows(groupL, (it, q) => it.left > q.right + 8);
+      const rowYR = packRows(groupR, (it, q) => it.right + 8 < q.left);
+      groupL.forEach((it) => setPx(it.api, it.right, rowYL[it.row], 'left'));
+      groupR.forEach((it) => setPx(it.api, it.left, rowYR[it.row], 'right'));
       own.forEach((c) => {
         const pl = c.api.userData.place;
         if (pl === 'roomSlab') {
@@ -610,6 +637,33 @@ export function createBridgeScene(stage, stageEl) {
       s.markerPx = [{ x: inX, y: bb.y1 + 16 }, { x: outX, y: bb.y1 + 16 }];
       titleEls[k].anchor = { x: (inP.x + outP.x) / 2, y: bb.y1 + 44 };
     });
+    // section details: any two names that still overlap (across the two models) are pushed apart, upward
+    {
+      const items = [];
+      vis.forEach((k) => {
+        sides[k].callouts.forEach((c) => { if (c.api.object.visible && !c.api.userData.secondary && c.api.userData.pl) items.push(c.api); });
+        if (sides[k].cold.userData.pl) items.push(sides[k].cold);
+      });
+      const rectOf = (a) => { const r = a.clientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+      for (let pass = 0; pass < 8; pass++) {
+        let moved = false;
+        for (let i = 0; i < items.length; i++) {
+          for (let j = i + 1; j < items.length; j++) {
+            const A = rectOf(items[i]); const B = rectOf(items[j]);
+            if (!(A.l < B.r + 2 && B.l < A.r + 2 && A.t < B.b + 2 && B.t < A.b + 2)) continue;
+            const up = A.t <= B.t ? items[i] : items[j];
+            const other = up === items[i] ? B : A;
+            const me = up === items[i] ? A : B;
+            const pl = up.userData.pl;
+            const ref = up.object.position;
+            pl.py -= (me.b - other.t) + 3;
+            up.setOffset(pxToWorld(pl.px, pl.py, ref).sub(ref));
+            moved = true;
+          }
+        }
+        if (!moved) break;
+      }
+    }
     updateOverlays();
     stage.requestRender();
   }
@@ -877,6 +931,34 @@ export function createBridgeScene(stage, stageEl) {
       sides.forEach((s, k) => { if (s) s.callouts.forEach((c) => c.api.setVisible(st.labels && visibleSides().includes(k))); });
       if (visibleSides().length && st.framedFor) placeLabels();
       stage.requestRender();
+    },
+    /** Levels 1 and 2: plain part names, plain markers, no digits on any 3D label. */
+    setPlain(on) {
+      on = !!on;
+      if (st.plain === on) return;
+      st.plain = on;
+      sides.forEach((sd, k) => {
+        if (!sd) return;
+        sd.callouts.forEach((c) => c.api.setText(labelText(c.spec.text)));
+        updateLabelText(k);
+      });
+      if (visibleSides().length && st.framedFor) frame();
+      stage.requestRender();
+    },
+    /** Client rectangles of everything drawn over the models (for layout checks): [{ kind, text, left, top, right, bottom }]. */
+    labelRects() {
+      const out = [];
+      visibleSides().forEach((k) => {
+        const sd = sides[k];
+        sd.callouts.forEach((c) => { if (c.api.object.visible && !c.api.userData.secondary) out.push({ kind: 'callout', side: k, text: c.api.text, ...c.api.clientRect() }); });
+        if (sd.cold.object.visible) out.push({ kind: 'cold', side: k, text: sd.cold.text, ...sd.cold.clientRect() });
+        (sd.markerPx || []).forEach((q, i) => {
+          const r = canvasRect();
+          out.push({ kind: 'marker', side: k, text: i === 0 ? 'in' : 'out', left: r.left + q.x - 58, right: r.left + q.x + 58, top: r.top + q.y - 14, bottom: r.top + q.y + 14 });
+        });
+      });
+      titleEls.forEach((t, k) => { if (t.root.style.display !== 'none' && visibleSides().includes(k)) { const r = t.root.getBoundingClientRect(); out.push({ kind: 'title', side: k, text: t.text.textContent, left: r.left, top: r.top, right: r.right, bottom: r.bottom }); } });
+      return out;
     },
     setTitles(list) {
       st.titles = list;

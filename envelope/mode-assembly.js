@@ -357,7 +357,7 @@ export default {
     // level 4: six stat tiles, US first then metric, one comparison line each
     const T4 = TEXT.l4.tiles;
     const tR = tile({ label: T4.r.label, us: '', si: '', compare: '' });
-    const tU = tile({ label: T4.u.label, us: '', si: '', compare: '' });
+    const tU = tile({ label: `${T4.u.label} (Btu/h·ft²·°F)`, us: '', si: '', compare: '' });
     const tQ = tile({ label: T4.q.label, us: '', si: '', compare: '' });
     const tS = tile({ label: T4.sheathing.label, us: '', si: '', compare: '' });
     const tD = tile({ label: T4.dew.label, us: '', si: '', compare: '' });
@@ -471,6 +471,105 @@ export default {
       }
     }
 
+
+    // ---------------------------------------------------------------- information layers (levels 1 to 4)
+    const MIXED = CLIMATE_PRESETS.mixed;
+    const mixedClimate = { tIn: MIXED.tIn, rhIn: MIXED.rhIn, tOut: MIXED.tOut, rhOut: MIXED.rhOut };
+    const wallFor = (key) => {
+      if (key === 'thin') {
+        const w = cloneWall('W1');
+        const ly = w.layers[1];
+        ly.materialId = 'batt_r13'; ly.framing.nominalR = 13; ly.framing.depth = FRAME_DEPTH.wood.batt_r13; ly.thickness = ly.framing.depth;
+        return { wallId: 'W1', wall: w };
+      }
+      if (key === 'outside') {
+        const w = cloneWall('W2');
+        w.layers.find((l) => l.materialId === 'xps').thickness = 4;
+        return { wallId: 'W2', wall: w };
+      }
+      return { wallId: 'W1', wall: cloneWall('W1') };
+    };
+    const choiceKey = (st) => {
+      const w = st.wall;
+      if (st.wallId === 'W1' && w.layers[1] && w.layers[1].materialId === 'batt_r13') return 'thin';
+      if (st.wallId === 'W1') return 'thick';
+      if (st.wallId === 'W2' && w.layers.some((l) => l.materialId === 'xps' && l.thickness >= 4)) return 'outside';
+      return null;
+    };
+    const applyWall = (key) => { keep.sel = null; store.set({ ...wallFor(key), climate: { ...mixedClimate }, climatePreset: 'mixed' }); };
+    function setView({ show, explode, section: sec }) {
+      if (show != null) { keep.show = show; showSeg.set(show); wall3d.setShow(show); renderLegend(); paintPlainLegend(); }
+      if (explode != null) { keep.explode = explode; exSl.set(explode); wall3d.setExplode(explode); }
+      if (sec != null) { keep.section = sec; secTg.set(sec); wall3d.setSection(sec); }
+    }
+    const pickAnswer = () => {
+      const st = store.get();
+      const ck = choiceKey(st);
+      const sheathIdx = st.wall.layers.findIndex((l) => SHEATH.includes(l.materialId));
+      const foamOut = sheathIdx >= 0 && st.wall.layers.some((l, i) => i > sheathIdx && FOAM.includes(l.materialId));
+      if (an.season === 'winter' && ck) {
+        if (ck === 'outside') return an.risk ? 'outsideSome' : 'outside';
+        if (an.risk) return ck;
+      }
+      if (an.risk) return foamOut ? 'outsideSome' : 'wet';
+      return an.condensation ? 'dryOutside' : 'dry';
+    };
+    const ans = answer({ kind: 'info', title: '', text: '' });
+    const choiceRow = el('div', { class: 'asm-choices', role: 'radiogroup', 'aria-label': TEXT.l1.pick });
+    TEXT.l1.choices.forEach((c) => {
+      const b = el('button', { type: 'button', class: 'asm-choice', role: 'radio', 'aria-checked': 'false', 'data-choice': c.id },
+        el('span', { class: 'asm-choice-ico', 'aria-hidden': 'true', html: ICONS[c.id] || '' }),
+        el('span', { text: c.label }));
+      b.addEventListener('click', () => applyWall(c.id));
+      choiceRow.appendChild(b);
+    });
+    const storyBox = story([
+      { ...TEXT.l2.steps[0], run: () => { applyWall('thick'); setView({ show: 'temp', explode: 0, section: false }); select_(null); } },
+      { ...TEXT.l2.steps[1], run: () => { applyWall('thick'); setView({ show: 'materials', explode: 60, section: false }); select_(1); } },
+      { ...TEXT.l2.steps[2], run: () => { applyWall('thick'); setView({ show: 'temp', explode: 0, section: true }); select_(null); } },
+      { ...TEXT.l2.steps[3], run: () => { applyWall('thick'); setView({ show: 'materials', explode: 0, section: false }); select_(null); } },
+      { ...TEXT.l2.steps[4], run: () => { applyWall('thick'); setView({ show: 'materials', explode: 30, section: false }); select_(2); } },
+      { ...TEXT.l2.steps[5], run: () => { applyWall('outside'); setView({ show: 'materials', explode: 0, section: false }); select_(null); } },
+    ], { title: 'The story' });
+    const tries = [
+      { ...TEXT.l3.tries[0], run: () => setView({ show: 'materials', explode: 100, section: false }) },
+      { ...TEXT.l3.tries[1], run: () => setView({ explode: 0, section: true }) },
+      { ...TEXT.l3.tries[2], run: () => { keep.sel = null; store.set({ wallId: 'W2', wall: cloneWall('W2') }); } },
+      { ...TEXT.l3.tries[3], run: () => { const p = CLIMATE_PRESETS.cold; store.set({ climate: { tIn: p.tIn, rhIn: p.rhIn, tOut: p.tOut, rhOut: p.rhOut }, climatePreset: 'cold' }); } },
+    ];
+    const tryEl = tryThis(tries);
+    panelA.prepend(layers.gate(el('div', { class: 'asm-stack' },
+      question(TEXT.l1.question, TEXT.l1.sub),
+      layers.gate(choiceRow, 1, 2),
+      layers.gate(storyBox.el, 2, 2),
+      ans.el,
+      layers.gate(el('div', {}, moreLink(layers)), 1, 2),
+      layers.gate(tryEl, 3, 4),
+    ), 1, 4));
+    panelA.append(secWall, secLayers, secVapor);
+    ctxPanels();
+    function ctxPanels() { setPanelMin('b', 4); setPanelMin('c', 3); }
+
+    // relabel the controls with plain words below level 5
+    const setText = (root, sel, t) => { const n = root.querySelector(sel); if (n) n.textContent = t; };
+    function relabel() {
+      const deep = layers.is(5);
+      const st = store.get();
+      wallSel.setOptions(Object.values(WALLS).map((w) => ({ value: w.id, label: deep ? `${w.id} · ${w.name}` : TEXT.l3.wallNames[w.id] })));
+      wallSel.set(st.wallId);
+      presetSel.setOptions([...Object.values(CLIMATE_PRESETS).map((p) => ({ value: p.id, label: deep ? p.name : TEXT.l3.weatherNames[p.id] })), { value: 'custom', label: deep ? 'Custom' : TEXT.l3.weatherNames.custom }]);
+      presetSel.set(st.climatePreset || 'custom');
+      setText(wallSel.el, '.field-label', deep ? 'Wall preset' : TEXT.l3.controls.wall);
+      setText(presetSel.el, '.field-label', deep ? 'Climate preset' : TEXT.l3.controls.weather);
+      setText(exSl.el, '.field-label', deep ? 'Exploded view' : TEXT.l3.controls.peel);
+      setText(secTg.el, '.toggle-label', deep ? 'Section cut' : TEXT.l3.controls.cut);
+      setText(lblTg.el, '.toggle-label', deep ? 'Labels' : TEXT.l3.controls.names);
+      setText(showSeg.el, '.field-label', deep ? 'Show' : TEXT.l3.controls.show);
+      const names = { materials: deep ? 'Materials' : TEXT.l3.showNames.materials, temp: deep ? 'Temperature' : TEXT.l3.showNames.temp, control: deep ? 'Control layers' : TEXT.l3.showNames.control };
+      Object.entries(names).forEach(([v, t]) => { const b = showSeg.el.querySelector(`[data-value="${v}"]`); if (b) b.textContent = t; });
+      paintPlainLegend();
+    }
+
     // ---------------------------------------------------------------- refresh
     function refresh() {
       const st = store.get();
@@ -553,9 +652,40 @@ export default {
         el('div', { class: 'asm-chips' }, sourceTag('Q = 1.08 × CFM × ΔT — ARE formula sheet'), leakChipEl),
       );
 
+      // level 1 to 4: answer, tiles
+      const ak = pickAnswer();
+      const A = TEXT.l1.answers[ak];
+      ans.update({ kind: ak === 'outside' || ak === 'dry' || ak === 'dryOutside' ? 'ok' : 'warn', title: A.title, text: A.text });
+      choiceRow.querySelectorAll('.asm-choice').forEach((b) => {
+        const on = b.dataset.choice === choiceKey(st);
+        b.dataset.selected = on ? 'true' : 'false';
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      const rsi = an.rTotal * 0.1761;
+      tR.update({ us: `R ${fmt(an.rTotal, 2)}`, si: `RSI ${fmt(rsi, 2)}`, compare: T4.r.compare(an.rTotal) });
+      tU.update({ us: `U ${fmt(an.uFactor, 4)}`, si: `${fmt(an.uFactor * 5.678, 3)} W/m²K`, compare: T4.u.compare });
+      tQ.update({ us: `${fmt(Q, 0)} Btu/h`, si: `${fmt(Q * 0.2931, 0)} W`, compare: T4.q.compare(Q) });
+      {
+        const wi = st.wall.layers.findIndex((l) => l.materialId === 'wrb');
+        let li = an.layers.findIndex((l) => SHEATH.includes(l.materialId));
+        let lab = T4.sheathing.label;
+        if (li < 0 && wi > 0) { li = wi - 1; lab = `${SHORT(MATERIALS[st.wall.layers[li].materialId].name)} temperature`; }
+        if (li < 0) { li = 0; lab = T4.sheathing.alt; }
+        const Ls = an.layers[li];
+        const f = an.season === 'winter' ? Ls.tIn : Ls.tOut;
+        tileLabel(tS).textContent = lab;
+        tS.update({ us: `${fmt(f, 1)} °F`, si: `${fmt(F_TO_C(f), 1)} °C`, compare: T4.sheathing.compare(f) });
+      }
+      tD.update({ us: `${fmt(an.dewPointF, 1)} °F`, si: `${fmt(F_TO_C(an.dewPointF), 1)} °C`, compare: T4.dew.compare });
+      tC.update({ us: an.risk ? 'Yes' : (c && c.outsideWrb ? 'Outside only' : 'No'), si: '', compare: an.risk ? T4.cond.compare.yes : (c && c.outsideWrb ? T4.cond.compare.outside : T4.cond.compare.no) });
+
       // summary
-      const tail = an.risk && c ? `! ${SHORT(MATERIALS[c.materialId].name).replace(/ sheathing$/, '')} ${fmt(c.tempF, 1)} °F` : 'OK';
-      summaryEl.textContent = `R ${fmt(an.rTotal, 2)} · U ${fmt(an.uFactor, 4)} · ${tail}`;
+      if (layers.is(4)) {
+        const tail = an.risk && c ? `! ${SHORT(MATERIALS[c.materialId].name).replace(/ sheathing$/, '')} ${fmt(c.tempF, 1)} °F` : 'OK';
+        summaryEl.textContent = `R ${fmt(an.rTotal, 2)} · U ${fmt(an.uFactor, 4)} · ${tail}`;
+      } else {
+        summaryEl.textContent = `${TEXT.l3.wallNames[st.wallId] || 'Your wall'} · ${TEXT.l1.summary[an.risk ? 'wet' : (c && c.outsideWrb ? 'dryOutside' : 'dry')]}`;
+      }
 
       // 3D + graph + legend
       wall3d.update(an, st.climate);
@@ -612,6 +742,45 @@ export default {
     if (wall3d.setCallouts) wall3d.setCallouts(labelsOn);
     if (/[?&]debug\b/.test(location.search)) { window.__envAssembly = { wall3d, card, getAn: () => an }; cleanup.push(() => { delete window.__envAssembly; }); }
 
+    layers.gateFn((on) => { if (wall3d.setPlainLabels) wall3d.setPlainLabels(on); }, 1, 2);
+    layers.onChange((lv, prev) => {
+      if (lv === 2 && prev !== 2) storyBox.go(0);
+      else if (lv === 1 && prev !== 1) setView({ show: 'materials', explode: 0, section: false });
+      relabel();
+      refresh();
+      // the stage changes size when panels appear or go away: fit the wall and its labels again
+      requestAnimationFrame(() => requestAnimationFrame(() => wall3d.resetView()));
+    });
+
+    // Polish: on wide screens a pinned card moves beside the wall instead of covering it.
+    const cardEl = card.element;
+    let nudging = false;
+    const nudge = () => {
+      if (nudging || cardEl.hidden || cardEl.dataset.pinned !== 'true' || cardEl.dataset.mode !== 'wide' || !wall3d.wallRect) return;
+      const wr = wall3d.wallRect();
+      if (!wr) return;
+      const r = cardEl.getBoundingClientRect();
+      const hit = r.right > wr.left + 4 && r.left < wr.right - 4 && r.bottom > wr.top + 4 && r.top < wr.bottom - 4;
+      if (!hit) return;
+      const vw = window.innerWidth; const M = 12; const w = r.width;
+      const preferRight = (r.left + r.right) / 2 >= (wr.left + wr.right) / 2;
+      for (const gap of [190, 0]) {
+        const xr = wr.right + gap + 10; const xl = wr.left - gap - 10 - w;
+        const opts = preferRight ? [['r', xr], ['l', xl]] : [['l', xl], ['r', xr]];
+        for (const [side, x] of opts) {
+          if (side === 'r' ? x + w <= vw - M : x >= M) {
+            nudging = true;
+            cardEl.style.left = `${x}px`;
+            nudging = false;
+            return;
+          }
+        }
+      }
+    };
+    const mo = new MutationObserver(nudge);
+    mo.observe(cardEl, { attributes: true, attributeFilter: ['style', 'hidden'] });
+    cleanup.push(() => mo.disconnect());
+
     // first-use hint over the stage
     if (!lsGet(HINT_KEY)) {
       const wide = window.matchMedia('(hover: hover) and (pointer: fine)').matches && window.innerWidth >= 900;
@@ -629,6 +798,8 @@ export default {
     refresh();
     renderList();
     wall3d.select(keep.sel);
+    relabel();
+    refresh();
     wall3d.resetView(); // once at mount
   },
   unmount() {

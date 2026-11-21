@@ -1,7 +1,7 @@
 // Reading level and structure checks for envelope/content-bridge.js (part B of the Envelope layers pass).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TEXT, PLAIN_NAME, PLAIN_LABEL, PLAIN_MARKER, PLAIN_COLD, lossWords } from '../envelope/content-bridge.js';
+import { TEXT, PLAIN_NAME, PLAIN_LABEL, PLAIN_MARKER, PLAIN_COLD, lossWords, cutWords } from '../envelope/content-bridge.js';
 import { gradeOf, longestSentence } from './helpers/readability.mjs';
 import { DETAILS } from '../envelope/bridge.js';
 
@@ -47,6 +47,7 @@ test('bridge plain 3D words and names have no digits (levels 1 and 2)', () => {
     assert.ok(!/\d/.test(s), `digit in: ${s}`);
   }
   for (const p of [0, 2, 15, 30, 56, 99, 153, 250, 400]) assert.ok(!/\d/.test(lossWords(p)), `digit in lossWords(${p})`);
+  for (const c of [0.05, 0.2, 0.39, 0.53, 0.63, 0.8, 0.95]) assert.ok(!/\d/.test(cutWords(c) || ''), `digit in cutWords(${c})`);
   assert.ok(Object.keys(TEXT.l3.subjects).length >= 3);
 });
 

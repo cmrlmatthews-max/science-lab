@@ -149,6 +149,25 @@ export function buildErrors(env) {
   gfx.slab(g, brickPoly(BASE + 0.12), brick0, face, brickHoleMat, { id: 'brick', dv: -(BASE + 0.12) });
   fx.addFilm(g, brickPoly(BASE + 0.12), face + 0.03, []);
 
+  // ---- no drainage gap: show what the missing gap means. Mortar droppings daub the wrap along the brick edge,
+  // and small pools of water bridge from the brick back to the wrap, so the peeled corner looks clearly different from the open gap.
+  if (noGap) {
+    const mort = M('mortar');
+    const rnd = (i) => { const v = Math.sin(i * 12.9898) * 43758.5453; return v - Math.floor(v); };
+    let k = 0;
+    [[2, 18], [29, 44]].forEach(([xa, xb]) => {
+      for (let x = xa; x < xb; x += 2.1) {
+        const d = 0.4 + rnd(k) * 2.4; const w = 1.1 + rnd(k + 7) * 1.3; const h = 0.8 + rnd(k + 3) * 1.1;
+        const y = x + 14 + d;
+        gfx.box(g, [x - w / 2, x + w / 2, y - h / 2, y + h / 2, CAV0 + 0.01, CAV0 + 0.35 + rnd(k + 5) * 0.4], mort, { id: 'drainage_gap' });
+        if (k % 2 === 0) fx.addPool(g, [x + 0.6, x + 1.8, y - 0.9, y - 0.2, CAV0 + 0.01, CAV0 + 0.3]);
+        k += 1;
+      }
+    });
+    fx.addStain(g, { x0: 1, x1: 17, y0: 14, y1: 31 }, CAV0 + 0.02);
+    fx.addStain(g, { x0: 30, x1: 46, y0: 43, y1: 58 }, CAV0 + 0.02);
+  }
+
   // ---- brick ties across the gap
   const tie = M('tie');
   [[10, 12], [10, 28], [10, 44], [10, 56], [30, 12], [30, 50], [50, 12], [50, 28], [50, 44], [50, 56]].forEach(([x, y]) => {
@@ -222,8 +241,9 @@ export function buildErrors(env) {
   if (noWeep) fx.addPool(g, [0.6, 59.4, BASE + 0.15, 6.4, CAV0 + 0.1, brick0 - 0.05]);
   tr.leaks.forEach((l) => {
     const z = mz(l.patch.z);
-    fx.addStain(g, l.patch, noGap && l.errorId === 'no_gap' ? CAV0 + 0.02 : z);
-    fx.addWarnOutline(g, l.patch, z + 0.04);
+    const bigP = l.errorId === 'no_gap' ? { x0: l.patch.x0 - 5, x1: l.patch.x1 + 5, y0: l.patch.y0 - 5, y1: l.patch.y1 + 5 } : l.patch; // a no-gap stain spreads wider
+    fx.addStain(g, bigP, noGap && l.errorId === 'no_gap' ? CAV0 + 0.02 : z);
+    fx.addWarnOutline(g, bigP, z + 0.04);
     const cx = (l.patch.x0 + l.patch.x1) / 2; const cy = (l.patch.y0 + l.patch.y1) / 2;
     calls.push({ text: 'Leak', anchor: [cx, cy, z + 0.05], offset: [0, 0, 0], leak: true, id: { reverse_lap: 'lap_joint', no_end_dam: 'end_dam', no_weeps: 'weep_holes', no_gap: 'drainage_gap', no_head_flashing: 'head_flashing' }[l.errorId], err: l.errorId });
   });
@@ -387,7 +407,10 @@ export function buildWalls(env) {
     calls: calls.filter((c) => !c.hide), hot: {},
     frame: { box: [-9, 0, 0, sz + 4, sz + STEP * 4 + 6, 12], dir: [1.45, 0.55, 0.9], pad: 1.0 },
     light: { dir: [-0.5, 0.75, 0.8], floorY: -0.05 },
-    markers: [{ text: 'Outside · rain', pos: [sz / 2, 0.5, 22], tone: 'cold' }, { text: 'Inside · dry', pos: [sz / 2, 0.5, -5], tone: 'warm' }],
+    // on a phone the markers sit above the wall, clear of it, and not on its base
+    markers: narrow
+      ? [{ text: 'Outside · rain', pos: [sz * 0.8, sz + STEP * (n - 1) + 9, 12], tone: 'cold' }, { text: 'Inside · dry', pos: [sz * 0.2, sz + STEP * (n - 1) + 9, 0], tone: 'warm' }]
+      : [{ text: 'Outside · rain', pos: [sz / 2, 0.5, 22], tone: 'cold' }, { text: 'Inside · dry', pos: [sz / 2, 0.5, -5], tone: 'warm' }],
     rainBox: rb,
   };
 }
@@ -507,7 +530,7 @@ const SHORT = {
   steel: 'Steel framing', aluminum: 'Aluminum',
 };
 export function buildLayers(env) {
-  const { T, gfx, g, S, narrow, cloneWall, infoForMaterial } = env;
+  const { T, gfx, fx, g, S, narrow, cloneWall, infoForMaterial } = env;
   const M = (k) => gfx.M(k);
   env.mat = M;
   const wall = cloneWall(S.layerWall || 'W1');
@@ -528,9 +551,11 @@ export function buildLayers(env) {
     const r = roles[i];
     const active = focus === 'all' ? LAYER_ORDER.find((rid) => r.roles.includes(rid)) : (r.roles.includes(focus) ? focus : null);
     const top = tops[i];
+    const n0 = g.children.length;
     const mk = (key) => {
-      if (active) return gfx.variant(key, { glow: colOf[active], glowK: 0.95 });
-      return gfx.variant(key, { sat: r.cladding ? 0.5 : 0.1, dim: r.cladding ? 0.85 : 0.72 });
+      // the chosen control layer glows in its own color and gets a thick outline (below); every other layer goes quiet
+      if (active) return gfx.variant(key, { glow: colOf[active], glowK: 1.25 });
+      return gfx.variant(key, { sat: r.cladding ? 0.3 : 0.04, dim: r.cladding ? 0.62 : 0.5 });
     };
     const mid = l.materialId;
     const key = mid === 'airspace' ? 'air' : mid;
@@ -556,6 +581,7 @@ export function buildLayers(env) {
     } else {
       gfx.box(g, [0, sz, 0, top, z0, z1], mk(key), { id: iid, cast: mid !== 'airspace' });
     }
+    if (active && fx && fx.addEdges) g.children.slice(n0).forEach((m) => { if (m.isMesh) fx.addEdges(g, m, colOf[active], 3.5); });
     // name tags: the control layer it plays, or cladding
     let txt = null;
     if (active) txt = `${SHORT[mid] || m.name}\n${nameOf[active]} control layer`;
@@ -570,7 +596,9 @@ export function buildLayers(env) {
     calls, hot: {},
     frame: null,
     light: { dir: [-0.55, 0.7, 0.8], floorY: -0.05 },
-    markers: [{ text: 'Inside · dry', pos: [sz / 2, 0.6, -5.5], tone: 'warm' }, { text: 'Outside · rain', pos: [sz / 2, 0.6, total + 5.5], tone: 'cold' }],
+    markers: narrow
+      ? [{ text: 'Inside · dry', pos: [sz * 0.2, sz + 2.8 * (n - 1) + 9, 0], tone: 'warm' }, { text: 'Outside · rain', pos: [sz * 0.8, sz + 2.8 * (n - 1) + 9, total], tone: 'cold' }]
+      : [{ text: 'Inside · dry', pos: [sz / 2, 0.6, -5.5], tone: 'warm' }, { text: 'Outside · rain', pos: [sz / 2, 0.6, total + 5.5], tone: 'cold' }],
     total, top: sz + 2.8 * (n - 1),
     rainBox: null,
   };

@@ -15,6 +15,9 @@ import { createCallout, createSideMarker, pickCallout, layoutCallouts } from './
 import { createGfx } from './water-gfx.js';
 import { createFx } from './water-fx.js';
 import { buildForces, buildWalls, buildErrors, buildLayers } from './water-build.js';
+import { question, answer, tryThis } from '../shared/simple.js';
+import { story, tile as lvTile, moreLink } from '../shared/layers.js';
+import { TEXT, plainLabel, answerKey } from './content-water.js';
 
 const DEFAULTS = {
   view: 'forces', forceId: 'momentum', defenseOn: false, strategyId: 'mass', fault: false,
@@ -72,6 +75,16 @@ const CSS = `
 .water-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .water-act { display: flex; flex-wrap: wrap; gap: 8px; }
 .water-act .btn { flex: 1 1 auto; }
+.water-stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.water-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.water-choice { min-height: 64px; padding: 10px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--paper-2); color: var(--ink); font: 600 15px/1.25 var(--font-body); cursor: pointer; text-align: center; }
+.water-choice:hover { border-color: var(--ink-2); }
+.water-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.water-choice[data-selected="true"] { background: var(--accent-soft); border-color: var(--accent-edge); box-shadow: inset 0 0 0 1px var(--accent-edge); color: var(--accent); }
+.water-gloss { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.4; }
+.water-gloss b { font-weight: 600; }
+.water-row-layer[data-selected="true"] { border-color: var(--row-color, var(--accent)); box-shadow: inset 6px 0 0 var(--row-color, var(--accent)), 0 0 0 2px var(--row-color, var(--accent)); background: var(--paper-2); }
+.water-row-layer[data-selected="false"] { opacity: 0.62; }
 `;
 
 export default {
@@ -81,6 +94,10 @@ export default {
   _cleanup: [],
   mount(ctx) {
     const { stage, panelA, panelB, panelC, summaryEl, store } = ctx;
+    const layers = ctx.layers;
+    const lv = () => layers.level();
+    ctx.setPanelMin('b', 4);
+    ctx.setPanelMin('c', 3);
     const T = stage.THREE;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const cleanup = this._cleanup;
@@ -95,6 +112,8 @@ export default {
     store.set({ water: { ...DEFAULTS, layerWall: cur.wallId || 'W1', ...(cur.water || {}) } });
     const S = () => store.get().water;
     const setS = (patch) => store.set({ water: { ...S(), ...patch } });
+    // Levels 1 and 2 use only the Errors wall with at most one mistake.
+    if (lv() < 3) store.set({ water: { ...S(), view: 'errors', errors: S().errors.slice(0, 1) } });
 
     // ---------- 3D ----------
     const gfx = createGfx(stage);
@@ -138,11 +157,13 @@ export default {
 
     function makeLabels(res) {
       const wantAll = !narrow;
+      const plain = lv() <= 3;
       (res.calls || []).forEach((c) => {
         if (!wantAll && !c.n && !c.leak) return;
+        if (lv() <= 2 && !c.n && !c.leak && !c.warn) return;
         const off = c.offset && (c.offset[0] || c.offset[1] || c.offset[2]) ? c.offset : [9, 7, 3];
         const co = createCallout(stage, {
-          text: c.text, anchor: new T.Vector3(...c.anchor), offset: new T.Vector3(...off), id: c.id,
+          text: plain ? plainLabel(c.text) : c.text, anchor: new T.Vector3(...c.anchor), offset: new T.Vector3(...off), id: c.id,
           fontPx: narrow ? 11.5 : 12.5,
         });
         if (c.warn || c.leak) co.setDotColor(fx.colors().warn);
@@ -152,7 +173,7 @@ export default {
         baseOffsets.push(new T.Vector3(...off));
       });
       (res.markers || []).forEach((m) => {
-        const mk = createSideMarker(stage, { text: m.text, position: new T.Vector3(...m.pos), tone: m.tone });
+        const mk = createSideMarker(stage, { text: plain ? plainLabel(m.text) : m.text, position: new T.Vector3(...m.pos), tone: m.tone });
         mk.setVisible(S().labels);
         markers.push(mk);
       });
@@ -336,14 +357,19 @@ export default {
     const setSel = (row, on) => { row.dataset.selected = on ? 'true' : 'false'; row.setAttribute('aria-pressed', on ? 'true' : 'false'); };
 
     const viewSeg = segmented({ options: VIEWS, value: S().view, onChange: (v) => { setS({ view: v }); card_.hide(); buildControls(); build(); frameView(); renderB(); renderSummary(); } });
+    function paintSeg() { viewSeg.el.querySelectorAll('.seg-btn').forEach((b) => { const o = VIEWS.find((x) => x.value === b.dataset.value); b.textContent = lv() === 3 ? TEXT.l3.views[o.value] : o.label; }); }
+    const P3 = () => lv() === 3;
+    const pf = (id) => TEXT.l3.forces.find((x) => x.id === id);
+    const pw = (id) => TEXT.l3.walls.find((x) => x.id === id);
+    const pe = (id) => TEXT.l3.errors.find((x) => x.id === id);
+    const pl = (id) => TEXT.l3.layers.find((x) => x.id === id);
     const viewBox = el('div', { class: 'water-view', style: 'display:flex;flex-direction:column;gap:18px' });
-    panelA.append(viewSeg.el, viewBox);
 
     const refs = {};
     function cameraSection() {
-      const labelsTg = toggle({ label: 'Labels', value: S().labels, onChange: (v) => { setS({ labels: v }); callouts.forEach((c) => c.setVisible(v)); markers.forEach((m) => m.setVisible(v)); if (v) relayout(); } });
+      const labelsTg = toggle({ label: P3() ? TEXT.l3.controls.labels : 'Labels', value: S().labels, onChange: (v) => { setS({ labels: v }); callouts.forEach((c) => c.setVisible(v)); markers.forEach((m) => m.setVisible(v)); if (v) relayout(); } });
       const reset = button({ label: 'Reset view', kind: 'ghost', onClick: () => frameView() });
-      return section('Labels and camera', labelsTg.el, el('div', { class: 'water-act' }, reset));
+      return section(P3() ? TEXT.l3.sections.labels : 'Labels and camera', labelsTg.el, el('div', { class: 'water-act' }, reset));
     }
     function buildControls() {
       viewBox.replaceChildren();
@@ -355,7 +381,7 @@ export default {
         const list = el('div', { class: 'water-list' });
         W.FORCES.forEach((f, i) => {
           const row = selRow({
-            name: `${i + 1}. ${f.name}`, sub: f.problem, color: pal.water, selected: s.forceId === f.id, info: FORCE_INFO[f.id],
+            name: `${i + 1}. ${P3() ? pf(f.id).name : f.name}`, sub: P3() ? pf(f.id).problem : f.problem, color: pal.water, selected: s.forceId === f.id, info: FORCE_INFO[f.id],
             onSelect: () => {
               if (S().forceId === f.id) return;
               setS({ forceId: f.id });
@@ -368,14 +394,14 @@ export default {
           list.appendChild(row);
         });
         refs.defHolder = el('div');
-        viewBox.append(section('Five forces', list), section('Defense', refs.defHolder));
+        viewBox.append(section(P3() ? TEXT.l3.sections.forces : 'Five forces', list), section(P3() ? TEXT.l3.sections.defense : 'Defense', refs.defHolder));
         makeDefToggle();
       } else if (s.view === 'walls') {
         refs.rows = {};
         const list = el('div', { class: 'water-list' });
         W.STRATEGIES.forEach((st) => {
           const row = selRow({
-            name: st.name, sub: st.examples, color: { mass: '#a65a45', barrier: '#e9e3d4', drainage: '#d8d3c4', rainscreen: '#b5584a' }[st.id], selected: s.strategyId === st.id, info: STRAT_INFO[st.id],
+            name: P3() ? pw(st.id).name : st.name, sub: P3() ? pw(st.id).examples : st.examples, color: { mass: '#a65a45', barrier: '#e9e3d4', drainage: '#d8d3c4', rainscreen: '#b5584a' }[st.id], selected: s.strategyId === st.id, info: STRAT_INFO[st.id],
             onSelect: () => {
               if (S().strategyId === st.id) return;
               setS({ strategyId: st.id });
@@ -386,14 +412,14 @@ export default {
           refs.rows[st.id] = row;
           list.appendChild(row);
         });
-        refs.crack = toggle({ label: 'Add a crack in the face', value: s.fault, onChange: (v) => { setS({ fault: v }); build(); renderB(); renderSummary(); } });
-        viewBox.append(section('Wall type', list), section('Fault', refs.crack.el));
+        refs.crack = toggle({ label: P3() ? TEXT.l3.controls.crack : 'Add a crack in the face', value: s.fault, onChange: (v) => { setS({ fault: v }); build(); renderB(); renderSummary(); } });
+        viewBox.append(section(P3() ? TEXT.l3.sections.walls : 'Wall type', list), section(P3() ? TEXT.l3.sections.fault : 'Fault', refs.crack.el));
       } else if (s.view === 'errors') {
         refs.tg = {};
         const wrap = el('div', { class: 'water-list' });
         W.ERRORS.forEach((e) => {
           const t = toggle({
-            label: e.name, value: s.errors.includes(e.id),
+            label: P3() ? pe(e.id).name : e.name, value: s.errors.includes(e.id),
             onChange: (v) => {
               const set = new Set(S().errors);
               if (v) set.add(e.id); else set.delete(e.id);
@@ -403,13 +429,13 @@ export default {
             },
           });
           refs.tg[e.id] = t;
-          wrap.appendChild(el('div', { class: 'water-err' }, t.el, el('div', { class: 'layer-sub', text: e.what }), el('div', { class: 'water-chips' }, infoChip(ERROR_INFO[e.id]))));
+          wrap.appendChild(el('div', { class: 'water-err' }, t.el, el('div', { class: 'layer-sub', text: P3() ? pe(e.id).what : e.what }), el('div', { class: 'water-chips' }, infoChip(ERROR_INFO[e.id]))));
         });
         const clear = button({
           label: 'Clear all', kind: 'ghost',
           onClick: () => { setS({ errors: [] }); Object.values(refs.tg).forEach((t) => t.set(false)); build(); renderB(); renderSummary(); },
         });
-        viewBox.append(section('Five errors', wrap), clear);
+        viewBox.append(section(P3() ? TEXT.l3.sections.errors : 'Five errors', wrap), clear);
       } else {
         refs.rows = {};
         const sel = select({
@@ -418,8 +444,8 @@ export default {
           onChange: (v) => { setS({ layerWall: v }); build(); renderB(); renderSummary(); },
         });
         const list = el('div', { class: 'water-list' });
-        const items = [...W.CONTROL_LAYERS.map((c) => ({ id: c.id, name: `${c.name} layer`, sub: c.job, color: c.color, info: CONTROL_INFO[c.id] })),
-          { id: 'all', name: 'All four', sub: 'Show every control layer at once.', color: 'linear-gradient(90deg,#0aa6a0,#7a4fd6,#d19a00,#e8590c)', info: 'control_layers' }];
+        const items = [...W.CONTROL_LAYERS.map((c) => ({ id: c.id, name: P3() ? pl(c.id).name : `${c.name} layer`, sub: P3() ? pl(c.id).job : c.job, color: c.color, info: CONTROL_INFO[c.id] })),
+          { id: 'all', name: P3() ? TEXT.l3.controls.allFour : 'All four', sub: P3() ? TEXT.l3.controls.allFourSub : 'Show every control layer at once.', color: 'linear-gradient(90deg,#0aa6a0,#7a4fd6,#d19a00,#e8590c)', info: 'control_layers' }];
         items.forEach((it) => {
           const row = selRow({
             name: it.name, sub: it.sub, color: it.color, selected: S().layer === it.id, info: it.info,
@@ -429,17 +455,20 @@ export default {
               build(); renderB(); renderSummary();
             },
           });
+          row.classList.add('water-row-layer');
+          if (/^#/.test(it.color)) row.style.setProperty('--row-color', it.color);
           refs.rows[it.id] = row;
           list.appendChild(row);
         });
-        viewBox.append(section('Wall', sel.el), section('Control layers', list));
+        viewBox.append(section('Wall', sel.el), section(P3() ? TEXT.l3.sections.layers : 'Control layers', list));
       }
       viewBox.appendChild(cameraSection());
     }
     function makeDefToggle() {
       const f = W.FORCES.find((x) => x.id === S().forceId);
-      refs.defTg = toggle({ label: `Defense: ${f.defenseName}`, value: S().defenseOn, onChange: (v) => { setS({ defenseOn: v }); build(); renderB(); renderSummary(); } });
-      refs.defHolder.replaceChildren(refs.defTg.el, el('p', { class: 'layer-sub', style: 'white-space:normal;margin-top:8px;font-size:13px', text: f.defense }));
+      const p = P3() ? pf(f.id) : null;
+      refs.defTg = toggle({ label: p ? `${TEXT.l3.controls.fix}: ${p.fixName}` : `Defense: ${f.defenseName}`, value: S().defenseOn, onChange: (v) => { setS({ defenseOn: v }); build(); renderB(); renderSummary(); } });
+      refs.defHolder.replaceChildren(refs.defTg.el, el('p', { class: 'layer-sub', style: 'white-space:normal;margin-top:8px;font-size:13px', text: p ? p.fix : f.defense }));
     }
 
     // =====================================================================
@@ -451,12 +480,13 @@ export default {
     function renderB() {
       const s = S();
       const out = [];
+      const deep = layers.is(5);
       if (s.view === 'forces') {
         const f = W.FORCES.find((x) => x.id === s.forceId);
         const t = W.traceForce(f.id, s.defenseOn);
         out.push(banner({ kind: t.ok ? 'ok' : 'warn', title: t.ok ? 'The wall stays dry.' : 'Water gets into the wall.', text: `${f.name}${s.defenseOn ? ` with ${f.defenseName.toLowerCase()}` : ' with no defense'}` }));
         out.push(section('Where the water goes', stepsList(t.steps)));
-        out.push(card(el('div', { class: 'water-block' },
+        if (deep) out.push(card(el('div', { class: 'water-block' },
           el('div', { class: 'water-h' }, el('span', { class: 'water-hl' }, el('span', { text: f.name }), infoButton(FORCE_INFO[f.id], { label: f.name })), sourceTag(f.source)),
           el('div', {}, el('b', { text: 'Problem' }), f.problem),
           el('div', {}, el('b', { text: 'Defense' }), f.defense))));
@@ -465,7 +495,7 @@ export default {
         const t = W.traceStrategy(st.id, s.fault);
         out.push(banner({ kind: t.ok ? 'ok' : 'warn', title: t.ok ? 'The wall stays dry.' : 'Water gets into the wall.', text: `${st.name}${s.fault ? ' with a crack in the face' : ''}` }));
         out.push(section('Where the water goes', stepsList(t.steps)));
-        out.push(card(el('div', { class: 'water-block' },
+        if (deep) out.push(card(el('div', { class: 'water-block' },
           el('div', { class: 'water-h' }, el('span', { class: 'water-hl' }, el('span', { text: st.name }), infoButton(STRAT_INFO[st.id], { label: st.name })), sourceTag(st.source)),
           el('div', {}, el('b', { text: 'Examples' }), st.examples),
           el('div', {}, el('b', { text: 'How it works' }), st.how),
@@ -481,7 +511,7 @@ export default {
           const e = W.ERRORS.find((x) => x.id === id);
           const zoom = button({ label: 'Zoom to it', kind: 'ghost', onClick: () => zoomTo(id) });
           const reset = button({ label: 'Reset view', kind: 'ghost', onClick: () => frameView() });
-          out.push(card(el('div', { class: 'water-block', 'data-kind': 'leak' },
+          if (deep) out.push(card(el('div', { class: 'water-block', 'data-kind': 'leak' },
             el('div', { class: 'water-h' }, el('span', { class: 'water-hl' }, el('span', { text: e.name }), infoButton(ERROR_INFO[id], { label: e.name })), sourceTag(e.source)),
             el('div', {}, el('b', { text: 'What' }), e.what),
             el('div', {}, el('b', { text: 'Result' }), e.result),
@@ -497,14 +527,14 @@ export default {
         shown.forEach((c) => {
           const mine = roles.filter((r) => r.roles.includes(c.id));
           const chips = mine.map((r) => { const e = infoForMaterial(r.materialId); return infoChip(e ? e.id : r.materialId, MATERIALS[r.materialId].name); });
-          out.push(card(el('div', { class: 'water-block' },
+          if (deep) out.push(card(el('div', { class: 'water-block' },
             el('div', { class: 'water-h' }, el('span', { class: 'water-hl' }, el('span', { class: 'swatch', style: { background: c.color } }), el('span', { text: `${c.name} layer` }), infoButton(CONTROL_INFO[c.id], { label: `${c.name} layer` })), sourceTag(c.source)),
             el('div', {}, el('b', { text: 'Job' }), c.job),
             el('div', {}, el('b', { text: 'Rule' }), c.rule),
             el('div', {}, el('b', { text: 'In this wall' }), mine.length ? el('span', { class: 'water-chips', style: { display: 'inline-flex', verticalAlign: 'middle' } }, chips) : 'Not drawn in this preset. Add one in Assembly mode.'))));
         });
         const clad = roles.filter((r) => r.cladding).map((r) => MATERIALS[r.materialId].name);
-        out.push(el('p', { class: 'layer-sub', style: 'white-space:normal', text: `Cladding is the weather surface${clad.length ? `: ${clad.join(', ')}` : ''}.` }));
+        if (deep) out.push(el('p', { class: 'layer-sub', style: 'white-space:normal', text: `Cladding is the weather surface${clad.length ? `: ${clad.join(', ')}` : ''}.` }));
       }
       panelB.replaceChildren(...out);
     }
@@ -517,9 +547,17 @@ export default {
     const D = W.DIMENSIONS;
     const tile = (p, id) => { const s = stat(p); s.el.querySelector('.stat-head').appendChild(infoButton(id, { label: p.label })); return s.el; };
     const pal0 = fx.colors();
+    const fmtIn = (n) => (n === 0.75 ? '3/4 in.' : `${n} in.`);
+    const fmtMm = (n) => `${Math.round(n * 25.4)} mm`;
+    const T4 = TEXT.l4.tiles;
+    const tileDefs = [['gap', D.minAirSpace], ['lap', W.WALL.lapOverlap], ['turnup', D.headFlashingTurnUp], ['drip', D.flashingProjection], ['weep', D.weepSpacingBrick]];
+    const tilesWrap = el('div', { class: 'sl-tiles' }, tileDefs.map(([k, n]) => lvTile({ label: T4[k].label, us: fmtIn(n), si: fmtMm(n), compare: T4[k].compare }).el));
+    const glossList = el('ul', { class: 'water-gloss' }, Object.entries(TEXT.l4.glosses).map(([k, v]) => el('li', {}, el('b', { text: `${k}: ` }), v)));
     panelC.append(
-      section('Rain and wind', rainS.el, windS.el),
-      (() => {
+      layers.gate(section(P3() ? TEXT.l3.controls.rainWind : 'Rain and wind', rainS.el, windS.el), 3, 5),
+      layers.gate(section(TEXT.l4.sectionTiles, tilesWrap), 4, 4),
+      layers.gate(section(TEXT.l4.sectionWords, glossList), 4, 4),
+      layers.gate((() => {
         const sec = section('BCI dimensions', stats(
           tile({ label: 'Weep holes', value: `${D.weepSpacingBrick}`, unit: 'in o.c.', source: 'BCI 7.22', hint: `Brick. Concrete masonry is ${D.weepSpacingCmu} in.` }, 'weep_holes'),
           tile({ label: 'Head flashing', value: `${D.headFlashingTurnUp}`, unit: 'in turn-up', source: 'BCI 7.22' }, 'head_flashing'),
@@ -528,20 +566,22 @@ export default {
         ));
         sec.classList.add('water-dims');
         return sec;
-      })(),
-      section('Path colors', legend([
+      })(), 5, 5),
+      layers.gate(section('Path colors', legend([
         { color: pal0.water, label: 'Shed or drain' },
         { color: pal0.absorb, label: 'Absorb' },
         { color: pal0.dry, label: 'Dry (vapor)' },
         { color: '#16273b', label: 'Leak: wet stain' },
-      ])),
+      ])), 3, 5),
     );
 
     // ---------- summary ----------
     function renderSummary() {
       const s = S();
       let txt = '';
-      if (s.view === 'forces') {
+      if (lv() <= 2) {
+        txt = TEXT.l1.summary[answerKey(s.errors)];
+      } else if (s.view === 'forces') {
         const f = W.FORCES.find((x) => x.id === s.forceId);
         txt = `${f.name} · ${s.defenseOn ? f.defenseName.toLowerCase() : 'no defense'} · ${s.defenseOn ? 'dry' : 'leak'}`;
       } else if (s.view === 'walls') {
@@ -555,10 +595,85 @@ export default {
         txt = `Layers · ${s.layerWall} · ${s.layer === 'all' ? 'all four' : `${s.layer} layer`}`;
       }
       summaryEl.textContent = txt;
+      paintAnswer();
+      paintChoices();
     }
     function renderAll() { renderB(); renderSummary(); }
 
+    // ---------- layers: question, choices, story, answer, Try this ----------
+    const ans = answer({ kind: 'info', title: '', text: '' });
+    function paintAnswer() {
+      const s = S();
+      let a;
+      if (lv() <= 2 || s.view === 'errors') {
+        a = TEXT.l1.answers[answerKey(s.errors)];
+      } else if (s.view === 'forces') {
+        a = TEXT.l3.answers.forces[s.forceId][s.defenseOn ? 'on' : 'off'];
+        a = { ...a, kind: s.defenseOn ? 'ok' : 'warn' };
+      } else if (s.view === 'walls') {
+        const t = W.traceStrategy(s.strategyId, s.fault);
+        a = { ...TEXT.l3.answers.walls[s.strategyId][s.fault ? 'fault' : 'ok'], kind: t.ok ? 'ok' : 'warn' };
+      } else {
+        a = { ...TEXT.l3.answers.layers[s.layer], kind: 'info' };
+      }
+      ans.update({ kind: a.kind || 'info', title: a.title, text: a.text });
+    }
+    const choiceRow = el('div', { class: 'water-choices', role: 'radiogroup', 'aria-label': TEXT.l1.pick });
+    function setErrors(list, keepView) {
+      setS({ errors: list, ...(keepView ? {} : { view: 'errors' }) });
+      if (S().view === 'errors') viewSeg.set('errors');
+      buildControls(); build(); renderB(); renderSummary();
+    }
+    for (const c of TEXT.l1.choices) {
+      const b = el('button', { type: 'button', class: 'water-choice', role: 'radio', 'aria-checked': 'false', 'data-choice': c.id, text: c.label });
+      b.addEventListener('click', () => { setErrors(c.id === 'good' ? [] : [c.id]); frameView(); });
+      choiceRow.appendChild(b);
+    }
+    function paintChoices() {
+      const key = answerKey(S().errors);
+      for (const b of choiceRow.children) { const on = b.dataset.choice === key; b.dataset.selected = on ? 'true' : 'false'; b.setAttribute('aria-checked', on ? 'true' : 'false'); }
+    }
+    const HOT = [null, null, 'no_gap', 'reverse_lap', 'no_head_flashing', 'no_weeps'];
+    const storyBox = story(TEXT.l2.steps.map((st, i) => ({
+      ...st,
+      run: () => {
+        if (S().errors.length || S().view !== 'errors') setErrors([]); else { build(); }
+        frameView();
+        if (HOT[i]) zoomTo(HOT[i]);
+      },
+    })), { title: 'The story' });
+    function go(patch) {
+      setS(patch);
+      viewSeg.set(S().view);
+      card_.hide(); buildControls(); build(); frameView(); renderB(); renderSummary();
+    }
+    const tries = [
+      { ...TEXT.l3.tries[0], run: () => { go({ view: 'errors', errors: ['no_gap'] }); zoomTo('no_gap'); } },
+      { ...TEXT.l3.tries[1], run: () => go({ view: 'forces', forceId: 'momentum', defenseOn: true }) },
+      { ...TEXT.l3.tries[2], run: () => go({ view: 'walls', strategyId: 'barrier', fault: true }) },
+    ];
+    const tryEl = tryThis(tries);
+    panelA.append(
+      layers.gate(question(TEXT.l1.question, TEXT.l1.sub), 1, 4),
+      layers.gate(choiceRow, 1, 1),
+      layers.gate(storyBox.el, 2, 2),
+      layers.gate(ans.el, 1, 4),
+      layers.gate(el('div', {}, moreLink(layers)), 1, 4),
+      layers.gate(viewSeg.el, 3, 5),
+      layers.gate(viewBox, 3, 5),
+      layers.gate(tryEl, 3, 4),
+    );
+    layers.onChange((now, prev) => {
+      if (now < 3 && prev >= 3) { setS({ view: 'errors', errors: S().errors.slice(0, 1) }); viewSeg.set('errors'); }
+      card_.hide();
+      paintSeg(); buildControls(); build();
+      if (now < 3 && prev >= 3) frameView();
+      renderB(); renderSummary();
+      if (now === 2 && prev !== 2) storyBox.go(0);
+    });
+
     // ---------- go ----------
+    paintSeg();
     buildControls();
     build();
     frameView();
