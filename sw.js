@@ -1,7 +1,7 @@
 // Science Lab service worker. Relative URLs only, so it works under a sub-path (GitHub Pages).
 // Bump CACHE when any file changes. If a mode worker adds files (assembly-*.js, bridge-*.js, water-*.js),
 // add them to FILES below (same for orbital/launch-*.js, orbits-*.js, transfer-*.js and molecules/molecules-*.js, crystals-*.js, compare-*.js).
-const CACHE = 'science-lab-v11';
+const CACHE = 'science-lab-v12';
 const FILES = [
   './',
   './envelope/',
@@ -30,6 +30,9 @@ const FILES = [
   './envelope/bridge-parts.js',
   './envelope/bridge-scene.js',
   './envelope/bridge.js',
+  './envelope/content-assembly.js',
+  './envelope/content-bridge.js',
+  './envelope/content-water.js',
   './envelope/index.html',
   './envelope/info-card.js',
   './envelope/info-data.js',
